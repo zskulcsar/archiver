@@ -9,7 +9,7 @@ The image-only workflow is the required deliverable. Direct burning is enabled o
 ## Prerequisites
 
 - Phase 1.1 project setup is complete.
-- Phase 1.2 portable core is complete and fully testable with fake adapters.
+- Phase 1.2 portable core is complete and fully testable with fake adapters, including its minimal Linux filesystem classifier.
 - A Linux test host, an external BD writer, known firmware revision, and supported test media are available for optical validation.
 
 ## Completion Criteria

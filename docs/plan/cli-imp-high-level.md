@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Deliver a Go command-line application that turns a source directory or file manifest into independently recoverable, encrypted multi-disc archive images. The CLI is the product core: later native GUIs invoke it and consume its structured progress output.
+Deliver a Go command-line application that turns positional source paths or a file manifest into independently recoverable, encrypted multi-disc archive images. The CLI is the product core: later native GUIs invoke it and consume its structured progress output.
 
 This plan defines product boundaries and implementation sequencing. Detailed plans for the portable core and the Linux, Windows, and macOS backends will follow separately.
 
@@ -11,8 +11,15 @@ This plan defines product boundaries and implementation sequencing. Detailed pla
 The first release implements the following decisions from the archive workflow specification:
 
 - Support Linux, Windows, and macOS from one Go codebase with OS-specific binaries.
-- Accept either a source directory or a manifest of absolute source paths.
-- Accept arbitrary media capacity targets. Common optical-media capacities are presets, not restrictions.
+- Accept either positional source paths or a versioned SQLite manifest of absolute source paths. Plaintext source manifests remain local and are not copied to archive media.
+- Derive logical archive paths from the deepest common source-directory ancestor. Windows selections spanning volumes use portable volume-prefixed paths beneath a virtual archive root.
+- Support local filesystems only in the first release. Reject network filesystems and external symlinks by default; allow explicit materialization of local external symlink targets.
+- Allocate archive input sequentially using canonical relative logical archive-path lexical order; split files at disc boundaries except for parts smaller than `1GB`.
+- Enable local per-disc recovery by default with `--loss-tolerance=10%`. Accept only whole-number values from `0%` through `50%`; this repairs partial local corruption but not a wholly missing disc.
+- Accept arbitrary media capacity targets as positive whole-number `MB` or `GB` values. Common optical-media capacities are presets, not restrictions.
+- Create archives in store mode without compression. Allocate against raw source size plus bounded archive, encryption, recovery, and image overhead.
+- Write each archive set under a human-readable, timestamped set ID. Refuse any operation that would reuse or overwrite existing staging or final output.
+- Use the output staging directory as the default one-disc temporary workspace; stream store-mode archive output directly into encryption and preflight capacity for the final images plus that temporary processing space.
 - Build independent per-disc archive payloads. An available disc must be recoverable without the rest of the archive set.
 - Treat a wholly lost disc as unrecoverable in the first release. Cross-disc recovery parity is a later optional policy.
 - Use proven external tools for archive/encryption, PAR2 integrity protection, image creation, and optical operations where practical.
@@ -28,7 +35,7 @@ The CLI must provide commands or equivalent operations for the following lifecyc
 2. Validate source input, capacity, output location, and requested policy before modifying output.
 3. Produce a deterministic archive plan showing each disc's assigned source files, reserved overhead, and expected image size.
 4. Create one encrypted archive payload per planned disc.
-5. Generate integrity metadata and optional local PAR2 recovery data for each disc's final encrypted payload.
+5. Generate integrity metadata and local PAR2 recovery data for each disc's final encrypted payload according to the selected loss tolerance.
 6. Produce a disc image containing the payload, recovery metadata, recovery instructions, required manifests, and a format-appropriate recovery-tool bundle.
 7. Verify generated artifacts before reporting success.
 8. When supported and explicitly requested, burn and read-back verify each image through an OS-specific backend.
@@ -42,11 +49,11 @@ The CLI must support non-interactive use and human-readable terminal output. It 
 
 ### 1. Command and Input Contract
 
-Define the stable command surface, configuration model, exit codes, structured events, and error categories. Define source-directory and manifest schemas, including file path, expected size, modification time, and optional content hash. The CLI must reject changed, missing, unreadable, or out-of-policy source files before archive creation.
+Define the stable command surface, configuration model, exit codes, structured events, and error categories. `plan` and `create` accept positional source paths or an exclusive `--manifest FILE`; source input requires `--archive-name`, while manifest input derives the archive-set name from the manifest filename. `create` prompts from a TTY or accepts a protected local `--passphrase-file FILE`; it never accepts a secret as a regular argument or environment variable. `--events-file FILE` writes JSON Lines to a new caller-selected file without changing human terminal output. Define source-directory and versioned SQLite manifest schemas, including source path, logical archive path, expected size, modification time, and optional content hash. The portable core uses the CGo-free `modernc.org/sqlite` driver. The CLI must reject changed, missing, unreadable, out-of-policy, or network-filesystem source files before archive creation. The portable core owns the filesystem-classification contract, and the Phase 1.2 Linux implementation supplies the minimum concrete classifier. Plaintext manifests stay local; archive metadata retaining source paths must be encrypted or omitted. Symlinks to archived members are preserved, while external links require the explicit materialization policy.
 
 ### 2. Archive Planning
 
-Implement capacity-aware allocation using exact byte values and explicit overhead reservations for archive artifacts, integrity data, manifests, recovery instructions, and the image filesystem. The planner must split oversized source files into recoverable parts when necessary and allocate each disc as a separate complete archive unit. Planning must be inspectable before any expensive archive or image operation starts.
+Implement sequential, capacity-aware allocation using exact byte values derived from the accepted capacity syntax and explicit overhead reservations for archive artifacts, integrity data, manifests, recovery instructions, and the image filesystem. All source entries are ordered by canonical relative logical archive path. The planner must split a file at a disc boundary when it cannot fit, except when the current-disc part would be smaller than `1GB`; it then starts the file on the next disc. Planning must be inspectable before any expensive archive or image operation starts.
 
 ### 3. Artifact and Recovery Layout
 
@@ -56,11 +63,11 @@ Define a versioned per-disc layout and a versioned archive-set manifest. Every d
 
 Define a small capability-based adapter boundary for external programs. The portable core asks adapters to create/extract encrypted archives, create/verify/repair PAR2 data, generate an image, enumerate writers, burn media, and read-back verify media. Adapters must report executable discovery, version, supported capabilities, invocation failures, and parsed verification results consistently.
 
-The initial adapter selection should favor 7-Zip archive creation, GnuPG encryption, and `par2cmdline` parity because they are available on all target operating systems. Image and optical adapters are selected per platform.
+The initial adapter selection should favor 7-Zip archive creation in store mode, GnuPG encryption, and `par2cmdline` parity because they are available on all target operating systems. Image and optical adapters are selected per platform.
 
 ### 5. Artifact Verification and Reporting
 
-Verify the encrypted archive, PAR2 set, manifests, and generated image before marking a disc complete. Produce a final archive-set report containing planned versus actual sizes, hashes, tool versions, verification status, and locations of all generated images. Retain enough logs and manifests for diagnosis without exposing secrets or source-file contents unnecessarily.
+Verify the encrypted archive, PAR2 set, manifests, and generated image before atomically publishing the archive set from its output staging directory. Produce a final archive-set report containing the set ID, planned versus actual sizes, hashes, tool versions, verification status, and locations of all generated images. Retain enough logs and manifests for diagnosis without exposing secrets or source-file contents unnecessarily.
 
 ## Platform Workstreams
 

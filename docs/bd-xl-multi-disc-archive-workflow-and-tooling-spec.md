@@ -152,6 +152,40 @@ Encrypted archive creation and integrity protection are available on all three o
 
 The first implementation should rely on these established tools where practical rather than reimplementing archival, encryption, or parity formats.
 
+### Manifest Privacy and Scale
+
+The GUI and CLI use a versioned SQLite manifest file to represent large source selections and working archive plans without loading all file records into memory. This local plaintext file may contain absolute paths and source metadata, so it must not be copied to archive media by default. Any archive metadata retaining source paths must be encrypted; metadata that is unnecessary for recovery should be omitted.
+
+Logical archive paths are derived from the deepest common directory ancestor of normalized source paths. Archive members use paths relative to that ancestor, avoiding basename collisions while omitting a leading filesystem root. Materialized external symlink targets remain beneath the logical path of the symlink that introduced them.
+
+Windows source selections spanning multiple local volumes have no common filesystem ancestor. They use a virtual archive root with a portable volume prefix, such as `C_/Users/alice/photos/a.jpg` and `D_/archive/report.pdf`. The manifest retains the original volume identity for source validation.
+
+### Source Filesystem and Symlink Policy
+
+The initial implementation supports local filesystems only. A source directory, manifest entry, or recursively materialized directory that resides on or enters a network filesystem must fail validation with a clear diagnostic; no override is provided. The portable core defines filesystem-classification contracts, and Phase 1.2 includes a minimal Linux classifier so the first usable workflow enforces this policy. Windows and macOS classifiers are delivered with their platform backends.
+
+Symlinks whose resolved targets are represented by archive members are preserved as archive-relative links. External symlinks are reported and rejected by default. The explicit `--external-symlink=materialize` policy materializes local regular-file targets as regular archive files and local directory targets as recursively collected archive trees. Materialized directory traversal applies the same policy to nested links, detects cycles, and fails if it encounters a network filesystem or unsupported target type.
+
+### Archive Allocation Policy
+
+Archive input is allocated sequentially rather than by capacity optimization. All source entries, including manifest input, are ordered by canonical relative logical archive path using bytewise UTF-8 lexical comparison. Each disc receives consecutive input data until its usable payload capacity is reached.
+
+When the next file cannot fit in the remaining usable capacity, it is split at the disc boundary and its remaining bytes begin the next disc. If the resulting part on the current disc would be smaller than `1GB`, the current disc is left with that capacity unused and the file begins on the next disc. Capacity calculations account for archive, image, manifest, recovery, and parity overhead rather than nominal media capacity.
+
+The first implementation uses archive store mode without compression. This preserves predictable capacity planning and avoids relying on compression estimates derived from filenames, extensions, or content heuristics.
+
+### Local Loss Tolerance
+
+Each disc includes local recovery data for its final encrypted artifacts. The user controls its amount with `--loss-tolerance=<integer>%`, where the accepted range is `0%` through `50%` and the default is `10%`. `0%` disables local recovery data.
+
+Loss tolerance is the percentage of protected encrypted artifacts that local recovery data can repair when sufficient recovery data remains readable. It does not recover a wholly missing disc, because that disc's data and recovery data are both unavailable. The archive planner reserves the requested recovery capacity before allocating payload data.
+
+### Archive Set Output
+
+`--output` identifies a parent directory for archive sets. The CLI creates a human-readable archive-set identifier from the manifest filename without its extension plus an execution timestamp in `YYYY-MM-DD_HH-MM` format. For source-directory input, `--archive-name` is required and supplies the name portion of the identifier.
+
+The CLI builds under `<output>/.archiver-staging-<set-id>` and, after successful verification, atomically renames that directory to `<output>/<set-id>`. The staging directory holds both candidate disc images and temporary artifacts for only the current disc; those temporary artifacts are removed after each image is verified. Before any archive work begins, the CLI verifies capacity for the final images plus approximately one disc of temporary processing space and refuses to operate if either staging or final path already exists. The initial implementation provides no automatic suffix, overwrite, reuse, resume, or separate workspace behavior.
+
 ### Optical-Media Backends
 
 Optical-drive discovery, BD-XL burning, and post-burn read-back verification are platform- and hardware-specific. They must be implemented as optional OS-specific backends rather than assumed capabilities of the cross-platform core.
