@@ -136,6 +136,34 @@ BD-XL ARCHIVE RECOVERY INSTRUCTIONS
 
 ---
 
+## Cross-Platform Implementation Constraints
+
+The archive workflow must support Linux, Windows, and macOS. The core workflow and optical-media operations have different portability characteristics.
+
+### Portable Core Capabilities
+
+Encrypted archive creation and integrity protection are available on all three operating systems through proven external tools. The implementation may use platform-specific tool adapters, but it must provide equivalent core behavior:
+
+| Capability | Suitable Tooling | Cross-Platform Status |
+|------------|------------------|-----------------------|
+| Archive creation and AES encryption | 7-Zip (`7zz`), DAR, GnuPG | Available on Linux, Windows, and macOS. |
+| Integrity verification and repair | `par2cmdline` / PAR2 | Available on Linux, Windows, and macOS. |
+| Disc image generation | `xorriso`, `cdrtools`, `Oscdimg` | Available, but requires an OS-specific adapter. |
+
+The first implementation should rely on these established tools where practical rather than reimplementing archival, encryption, or parity formats.
+
+### Optical-Media Backends
+
+Optical-drive discovery, BD-XL burning, and post-burn read-back verification are platform- and hardware-specific. They must be implemented as optional OS-specific backends rather than assumed capabilities of the cross-platform core.
+
+- Linux: `xorriso` is the primary candidate for scripted ISO creation, BD writing, and checksum-based verification.
+- Windows: image generation can use `Oscdimg`, while a separately validated burner backend is required for BD-XL writing and verification.
+- macOS: image generation is available through tools such as `cdrtools` or `xorriso`, but direct BD-XL writing and verification require validation against the selected external drive, firmware, and media.
+
+The CLI must always support generating disc images to an output folder without an optical drive. Direct burning is an additive capability: the CLI should report whether the selected backend can discover a writer, burn the selected media profile, and verify the written disc. A tested hardware compatibility matrix is required before advertising direct BD-XL support for a platform.
+
+---
+
 ## 📦 Example: Full Workflow for a 200GB Video File
 
 ### **1. Split the Video**
