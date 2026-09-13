@@ -45,7 +45,7 @@ The plan file contains the archive-set ID, usable capacity, split policy, disc u
 
 Requirements:
 
-- Go 1.25.3
+- Go 1.25.8
 - `golangci-lint` 2.11.4
 - GNU Make
 
@@ -54,6 +54,18 @@ Run the required local checks:
 ```sh
 make verify
 ```
+
+Inspect dependencies:
+
+```sh
+make deps-verify
+make deps-outdated
+
+go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+make deps-vuln
+```
+
+`deps-vuln` scans reachable code for known vulnerabilities. GitHub Actions installs the pinned scanner and runs it before building.
 
 Build the CLI:
 

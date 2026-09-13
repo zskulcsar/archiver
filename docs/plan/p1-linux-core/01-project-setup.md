@@ -48,7 +48,7 @@ Create empty future directories only when they need a tracked marker or document
 ### [x] 1. Bootstrap the Go Module
 
 1. Use `github.com/zskulcsar/archiver` as the canonical Go module path.
-2. Add `go.mod` at the repository root using Go 1.25.3, the version installed on the phase-one Linux development host.
+2. Add `go.mod` at the repository root using Go 1.25.8, the patched version used by the phase-one Linux development host.
 3. Add `cmd/archiver/main.go` as the composition root with a minimal version/help command.
 4. Keep the command layer thin: it parses input, wires dependencies, invokes an application use case, renders events, and maps errors to exit codes.
 

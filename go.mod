@@ -1,8 +1,11 @@
 module github.com/zskulcsar/archiver
 
-go 1.25.3
+go 1.25.8
 
-require github.com/spf13/cobra v1.9.1
+require (
+	github.com/spf13/cobra v1.9.1
+	modernc.org/sqlite v1.58.0
+)
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
@@ -16,5 +19,4 @@ require (
 	modernc.org/libc v1.75.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
-	modernc.org/sqlite v1.58.0 // indirect
 )

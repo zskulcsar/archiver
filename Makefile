@@ -2,6 +2,9 @@
 	help \
 	fmt \
 	fmt-check \
+	deps-verify \
+	deps-vuln \
+	deps-outdated \
 	vet \
 	lint \
 	test-unit \
@@ -26,6 +29,16 @@ fmt: ## Format Go source files.
 fmt-check: ## Check Go source formatting.
 	@test -z "$$(gofmt -l $$(git ls-files '*.go'))"
 
+deps-verify: ## Verify module integrity and that go.mod and go.sum are tidy.
+	go mod verify
+	go mod tidy -diff
+
+deps-vuln: ## Scan reachable code for known vulnerabilities with govulncheck.
+	govulncheck ./...
+
+deps-outdated: ## Report available module updates.
+	go list -m -u all
+
 vet: ## Run Go static analysis.
 	go vet ./...
 
@@ -41,7 +54,7 @@ test-race: ## Run unit tests with the race detector.
 docs-check: ## Check Markdown files for trailing whitespace.
 	@git ls-files --cached --others --exclude-standard '*.md' | awk '$$0 == "README.md" || $$0 ~ "^docs/"' | xargs -r awk '/[[:blank:]]$$/ { printf "%s:%d: trailing whitespace\n", FILENAME, FNR; failed=1 } END { exit failed }'
 
-verify: fmt-check vet lint test-unit docs-check ## Run the required Phase 1.1 checks.
+verify: fmt-check deps-verify vet lint test-unit docs-check ## Run the required local checks.
 
 build: ## Build the archiver CLI.
 	go build -trimpath -ldflags "-X main.version=$(VERSION) -X main.revision=$(REVISION)" -o $(BINARY) ./cmd/archiver
