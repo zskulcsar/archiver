@@ -264,11 +264,11 @@ mkdir -p "$OUTPUT_DIR"
 for chunk in "$CHUNKS_DIR"/*; do
     archive_name="$(basename $chunk).tar"
     encrypted_name="$(basename $chunk).tar.gpg"
-    
+
     tar cf "$OUTPUT_DIR/$archive_name" "$chunk"
     gpg --symmetric --cipher-algo AES256 -o "$OUTPUT_DIR/$encrypted_name" "$OUTPUT_DIR/$archive_name"
     rm "$OUTPUT_DIR/$archive_name"  # Clean up unencrypted archive
-    
+
     echo "Processed: $chunk -> $encrypted_name"
 done
 ```

@@ -45,36 +45,36 @@ Create empty future directories only when they need a tracked marker or document
 
 ## Work
 
-### [ ] 1. Bootstrap the Go Module
+### [x] 1. Bootstrap the Go Module
 
 1. Use `github.com/zskulcsar/archiver` as the canonical Go module path.
 2. Add `go.mod` at the repository root using Go 1.25.3, the version installed on the phase-one Linux development host.
 3. Add `cmd/archiver/main.go` as the composition root with a minimal version/help command.
 4. Keep the command layer thin: it parses input, wires dependencies, invokes an application use case, renders events, and maps errors to exit codes.
 
-### [ ] 2. Establish Dependency Direction
+### [x] 2. Establish Dependency Direction
 
-1. Define portable domain types under `internal/domain`.
-2. Define use cases and adapter interfaces under `internal/app` and `internal/adapters`.
+1. Reserve the portable domain package under `internal/domain` for Phase 1.2 types and rules.
+2. Reserve use-case and adapter-contract packages under `internal/app` and `internal/adapters` for Phase 1.2.
 3. Keep process execution, filesystem details, and OS-specific code outside the domain.
 4. Reserve `internal/platform/linux` for the Linux implementations introduced in Phase 1.3.
 5. Do not add Windows/macOS build tags or adapters until their platform plans are implemented.
 
-### [ ] 3. Establish CLI and Event Conventions
+### [x] 3. Establish CLI and Event Conventions
 
 1. Reserve a single executable name, `archiver`, on every platform.
 2. Define conventions for human-readable standard output, diagnostic standard error, and JSON Lines machine events.
 3. Reserve documented exit-code ranges for invalid input, unavailable dependencies, verification failure, cancellation, and unexpected failures.
 4. Include the build version and source revision in the CLI version command and generated reports where available.
 
-### [ ] 4. Establish Quality Tooling
+### [x] 4. Establish Quality Tooling
 
 1. Add Makefile targets for formatting, unit tests, race tests where concurrency is introduced, static analysis, and an aggregate verification target.
 2. Use `gofmt`, `go vet`, and `golangci-lint` 2.11.4 with a committed project configuration.
 3. Configure GitHub Actions to run the same aggregate verification target on Linux for pull requests.
 4. Configure dependency updates and release automation only after the first buildable CLI exists and their required credentials/policies are agreed.
 
-### [ ] 5. Establish Repository Policies
+### [x] 5. Establish Repository Policies
 
 1. Update `.gitignore` for Go build outputs, temporary archives/images, test fixtures generated at runtime, and local tool configuration without ignoring source fixtures or documentation.
 2. Add contributor-facing documentation covering required Go version, supported local commands, and the fact that optical tooling is optional until Phase 1.3.

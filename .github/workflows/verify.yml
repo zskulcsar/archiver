@@ -1,0 +1,28 @@
+name: Verify
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.3"
+
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.11.4
+
+      - run: make verify
+
+      - run: make build REVISION=${{ github.sha }}

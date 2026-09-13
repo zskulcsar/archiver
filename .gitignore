@@ -1,3 +1,13 @@
 #
 .env*
 .tmp
+
+# Go build and test artifacts.
+/bin/
+/coverage.out
+
+# Locally generated archive artifacts.
+*.iso
+*.7z
+*.gpg
+*.par2

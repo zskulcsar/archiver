@@ -37,7 +37,7 @@ The CLI must support non-interactive use and human-readable terminal output. It 
 
 ## Core Workstreams
 
-- [ ] [Phase 1.1: Project setup](p1-linux-core/01-project-setup.md#work)
+- [x] [Phase 1.1: Project setup](p1-linux-core/01-project-setup.md#work)
 - [ ] [Phase 1.2: Portable core CLI](p1-linux-core/02-core-cli.md#work)
 
 ### 1. Command and Input Contract
