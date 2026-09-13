@@ -120,7 +120,7 @@ This guide instructs agents how to write Go code that mirrors community best pra
 
 ## Testing
 - We use RED/GREEN TDD in this project, use the $test-driven-development and $testing-anti-patterns skills.
-- When writing test, always provide a short description of the test following the template:
+- When writing test, always include a short description of the test as a comment in the test implementation following the template:
   ```markdown
   * [x] **TEST_CASE_ID** Short description
   - Description: One sentence with essential details.
