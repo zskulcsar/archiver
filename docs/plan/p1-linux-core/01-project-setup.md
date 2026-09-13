@@ -17,7 +17,7 @@ This phase creates buildable project structure and development quality gates. It
 - The default build, test, formatting, static analysis, and documentation checks run through Makefile targets.
 - The source layout prevents portable business logic from depending on operating-system integrations.
 - The repository reserves locations for future GUIs and packaging without implementing either.
-- CI verifies the Linux phase-one build and tests. Cross-compilation scaffolding is present but Windows/macOS release artifacts are not required in this phase.
+- GitHub Actions verifies the Linux phase-one build and tests. Cross-compilation scaffolding is present but Windows/macOS release artifacts are not required in this phase.
 
 ## Intended Repository Layout
 
@@ -47,8 +47,8 @@ Create empty future directories only when they need a tracked marker or document
 
 ### [ ] 1. Bootstrap the Go Module
 
-1. Select the canonical module path before the first release artifact is published.
-2. Add `go.mod` at the repository root using the supported Go version selected for the project.
+1. Use `github.com/zskulcsar/archiver` as the canonical Go module path.
+2. Add `go.mod` at the repository root using Go 1.25.3, the version installed on the phase-one Linux development host.
 3. Add `cmd/archiver/main.go` as the composition root with a minimal version/help command.
 4. Keep the command layer thin: it parses input, wires dependencies, invokes an application use case, renders events, and maps errors to exit codes.
 
@@ -70,8 +70,8 @@ Create empty future directories only when they need a tracked marker or document
 ### [ ] 4. Establish Quality Tooling
 
 1. Add Makefile targets for formatting, unit tests, race tests where concurrency is introduced, static analysis, and an aggregate verification target.
-2. Use `gofmt`, `go vet`, and the repository's selected linter configuration.
-3. Configure CI to run the same aggregate verification target on Linux for pull requests.
+2. Use `gofmt`, `go vet`, and `golangci-lint` 2.11.4 with a committed project configuration.
+3. Configure GitHub Actions to run the same aggregate verification target on Linux for pull requests.
 4. Configure dependency updates and release automation only after the first buildable CLI exists and their required credentials/policies are agreed.
 
 ### [ ] 5. Establish Repository Policies
