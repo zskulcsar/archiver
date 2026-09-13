@@ -1,0 +1,27 @@
+.PHONY: \
+	help
+
+## Default
+help: ## List available make targets with descriptions.
+	@printf "Available targets:\n"
+	@grep -hE '.*##\s' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*##"} {printf "  %-16s %s\n", $$1, $$2}'
+
+## Basic code checkers
+fmt-<xx>: # <fmt- target description for formatting code>
+	...
+
+lint-<xx>: ## <lint- target description for linting code>
+
+vc-<xxx>: ## <vc- target description for vulnerability checking of code and dependencies>
+
+## TDD targets
+test-unit: ## <unit test run description>
+
+test-int: ## <integration test run description>
+
+## Development targets
+imp-verify: ## <description of implementation verification (format, lint, vc, test-*)>
+
+clean: ## Clean the project from unwanted artifacts, aka. junk
+
+build: ## To build the project
