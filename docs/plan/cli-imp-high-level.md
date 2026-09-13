@@ -14,7 +14,7 @@ The first release implements the following decisions from the archive workflow s
 - Accept either positional source paths or a versioned SQLite manifest of absolute source paths. Plaintext source manifests remain local and are not copied to archive media.
 - Derive logical archive paths from the deepest common source-directory ancestor. Windows selections spanning volumes use portable volume-prefixed paths beneath a virtual archive root.
 - Support local filesystems only in the first release. Reject network filesystems and external symlinks by default; allow explicit materialization of local external symlink targets.
-- Allocate archive input sequentially using canonical relative logical archive-path lexical order; split files at disc boundaries except for parts smaller than `1GB`.
+- Allocate archive input sequentially using canonical relative logical archive-path lexical order. `--min-split-size` controls the minimum part threshold and defaults to `0MB` to maximize media use.
 - Enable local per-disc recovery by default with `--loss-tolerance=10%`. Accept only whole-number values from `0%` through `50%`; this repairs partial local corruption but not a wholly missing disc.
 - Accept arbitrary media capacity targets as positive whole-number `MB` or `GB` values. Common optical-media capacities are presets, not restrictions.
 - Create archives in store mode without compression. Allocate against raw source size plus bounded archive, encryption, recovery, and image overhead.
@@ -45,7 +45,7 @@ The CLI must support non-interactive use and human-readable terminal output. It 
 ## Core Workstreams
 
 - [x] [Phase 1.1: Project setup](p1-linux-core/01-project-setup.md#work)
-- [ ] [Phase 1.2: Portable core CLI](p1-linux-core/02-core-cli.md#work)
+- [x] [Phase 1.2: Portable core CLI](p1-linux-core/02-core-cli.md#work)
 
 ### 1. Command and Input Contract
 
@@ -53,7 +53,7 @@ Define the stable command surface, configuration model, exit codes, structured e
 
 ### 2. Archive Planning
 
-Implement sequential, capacity-aware allocation using exact byte values derived from the accepted capacity syntax and explicit overhead reservations for archive artifacts, integrity data, manifests, recovery instructions, and the image filesystem. All source entries are ordered by canonical relative logical archive path. The planner must split a file at a disc boundary when it cannot fit, except when the current-disc part would be smaller than `1GB`; it then starts the file on the next disc. Planning must be inspectable before any expensive archive or image operation starts.
+Implement sequential, capacity-aware allocation using exact byte values derived from the accepted capacity syntax and explicit overhead reservations for archive artifacts, integrity data, manifests, recovery instructions, and the image filesystem. All source entries are ordered by canonical relative logical archive path. The planner resolves the user-selected `--min-split-size` policy, defaulting to `0MB`, before deciding whether to split a file at a disc boundary or start it on the next disc. Planning must be inspectable before any expensive archive or image operation starts.
 
 ### 3. Artifact and Recovery Layout
 

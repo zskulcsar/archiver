@@ -27,8 +27,8 @@ The first-release command surface is:
 | Operation | Responsibility |
 |---|---|
 | `archiver backends [--events-file FILE]` | Report discovered adapters and their capabilities. |
-| `archiver plan --capacity CAPACITY --output DIR [--archive-name NAME] [--manifest FILE \| SOURCE...] [--loss-tolerance PERCENT] [--external-symlink=materialize] [--events-file FILE]` | Validate inputs and print the archive allocation plan without creating artifacts. |
-| `archiver create --capacity CAPACITY --output DIR [--archive-name NAME] [--manifest FILE \| SOURCE...] [--loss-tolerance PERCENT] [--external-symlink=materialize] [--passphrase-file FILE] [--events-file FILE]` | Validate, create, and verify disc images. |
+| `archiver plan --capacity CAPACITY --output DIR [--archive-name NAME] [--manifest FILE \| SOURCE...] [--loss-tolerance PERCENT] [--min-split-size THRESHOLD] [--external-symlink=materialize] [--events-file FILE]` | Validate inputs, print the archive allocation plan, and write a new `<set-id>.plan.json` in the output parent. |
+| `archiver create --capacity CAPACITY --output DIR [--archive-name NAME] [--manifest FILE \| SOURCE...] [--loss-tolerance PERCENT] [--min-split-size THRESHOLD] [--external-symlink=materialize] [--passphrase-file FILE] [--events-file FILE]` | Validate, create, and verify disc images. |
 | `archiver verify ARCHIVE_SET_DIR [--events-file FILE]` | Verify an existing published archive set using its manifest. |
 
 `plan` and `create` accept exactly one source-selection mechanism: one or more positional source paths or `--manifest FILE`. The manifest remains the GUI integration boundary. Source input requires `--archive-name`; manifest input rejects that option because it derives the name from the manifest filename. `--external-symlink` defaults to rejection and accepts only `materialize` when supplied.
@@ -92,13 +92,23 @@ The planner allocates input sequentially; it does not reorder files to minimize 
 
 All input, including source-directory, manifest, and generated materialized-symlink entries, is ordered by canonical logical archive path using bytewise UTF-8 lexical comparison. Generated entries participate at the logical path where the symlink was encountered.
 
+The minimum split-size policy is configured with `--min-split-size=THRESHOLD` and defaults to `0MB`. The strict grammar is:
+
+```text
+^(0|[1-9][0-9]*)(MB|GB|%)$
+```
+
+Absolute values use the same decimal units as capacity input. Percentage values are whole numbers from `0%` through `100%`, inclusive, and resolve to `ceil(usable-payload-capacity * percentage / 100)` bytes for each disc. Whitespace, fractions, lowercase units, binary units, bare numbers, and percentages above `100%` are rejected. An absolute threshold greater than usable payload capacity is rejected before allocation because it can make a required split impossible.
+
+`0MB` and `0%` always permit splitting at a nonzero remaining-capacity boundary, maximizing media use. Operators who prefer fewer parts may select a larger absolute or percentage threshold.
+
 For each input file, the planner applies these rules against the current disc's usable payload capacity after all reserved overhead:
 
 1. If the complete file fits, allocate it to the current disc.
-2. If it does not fit and the portion that would fill the current disc is at least `1GB`, split the file at that boundary. Allocate the first part to the current disc and continue the remaining bytes on the next disc.
-3. If that current-disc portion would be smaller than `1GB`, leave the remaining capacity unused and begin the complete file on the next disc.
+2. If it does not fit and the portion that would fill the current disc is at least the resolved minimum split size, split the file at that boundary. Allocate the first part to the current disc and continue the remaining bytes on the next disc.
+3. If that current-disc portion is smaller than the resolved minimum split size, leave the remaining capacity unused and begin the complete file on the next disc.
 
-`1GB` is 1,000,000,000 bytes. Split parts retain ordered part metadata so recovery can reassemble the original file. The planner must record unused capacity caused by the minimum-part rule in the archive plan and final report.
+Split parts retain ordered part metadata so recovery can reassemble the original file. The planner must record the requested threshold, resolved byte threshold, and unused capacity caused by the policy in the archive plan and final report.
 
 ## Local Loss Tolerance
 
@@ -144,15 +154,15 @@ Recovery-tool bundle distribution remains deferred to Phase 1.3. Phase 1.2 defin
 
 ## Work
 
-### [ ] 1. Define Versioned Portable Formats
+### [x] 1. Define Versioned Portable Formats
 
 1. Define a manifest schema that records absolute source paths, logical archive paths, file identity metadata, original volume identity where applicable, and optional precomputed hashes.
 2. Define an archive-set configuration schema containing set ID, capacity, image profile, encryption configuration reference, loss tolerance, output policy, and format version.
-3. Define an archive plan schema containing ordered disc assignments, expected artifact sizes, reserved overhead, and the source-file parts created by splitting.
+3. Define an archive plan schema containing ordered disc assignments, expected artifact sizes, reserved overhead, requested and resolved minimum split sizes, and the source-file parts created by splitting.
 4. Define per-disc and archive-set manifests. They identify the archive set, disc number, payload files, hashes, tool formats and versions, recovery instructions, and recovery-tool bundle identity.
 5. Version all persisted schemas from their first use. Reject unsupported future versions rather than guessing their semantics.
 
-### [ ] 2. Implement Input Validation and Snapshotting
+### [x] 2. Implement Input Validation and Snapshotting
 
 1. Resolve and validate every source path before allocation.
 2. Reject duplicate, missing, unreadable, non-regular, or changed source files according to the selected manifest policy.
@@ -160,16 +170,16 @@ Recovery-tool bundle distribution remains deferred to Phase 1.3. Phase 1.2 defin
 4. Apply the documented local-filesystem and symlink policy, including archive-relative link preservation, explicit external-target materialization, physical-identity cycle detection, and network-filesystem rejection. Define the portable classification contract, implement test doubles, and provide the minimum Linux classifier required for real source-directory validation.
 5. Validate the output parent, calculated set ID, staging path, final path, and free capacity for final images plus one-disc temporary processing. Refuse any existing staging or final path.
 
-### [ ] 3. Implement Capacity-Aware Planning
+### [x] 3. Implement Capacity-Aware Planning
 
 1. Parse the documented strict capacity grammar to exact bytes and reject all other values.
 2. Obtain image-profile constraints from the selected image adapter, including effective capacity, filesystem overhead, supported file-size limits, required recovery-tool bundle size, and the selected loss tolerance's recovery-data reservation.
 3. Reserve conservative store-mode archive, encryption, recovery, manifest, and image overhead before allocating payload data. Never plan against nominal media capacity alone.
-4. Split input files according to the documented sequential boundary and minimum-part policy. Preserve enough metadata to reassemble each original file after extraction.
+4. Parse and resolve the documented minimum split-size policy, then split input files according to the sequential boundary policy. Preserve enough metadata to reassemble each original file after extraction.
 5. Allocate all sources deterministically into separate disc units using canonical relative logical archive-path lexical ordering.
 6. Report unallocatable input and the exact capacity shortfall before archive creation.
 
-### [ ] 4. Define Adapter Contracts and Orchestration
+### [x] 4. Define Adapter Contracts and Orchestration
 
 1. Define narrow interfaces for archive creation, encryption, PAR2-based loss tolerance, image generation, recovery-tool bundling, and verification.
 2. Keep writer discovery, burning, and read-back verification as optional capabilities; the portable create path requires only image creation and image verification.
@@ -178,7 +188,7 @@ Recovery-tool bundle distribution remains deferred to Phase 1.3. Phase 1.2 defin
 5. Do not calculate parity over plaintext. Do not retain temporary plaintext archives after the encrypted artifact has been verified.
 6. Keep an incomplete staging directory for diagnosis only when explicitly requested; otherwise clean it on success and failure according to the configured safety policy.
 
-### [ ] 5. Implement Reporting, Cancellation, and Recovery Instructions
+### [x] 5. Implement Reporting, Cancellation, and Recovery Instructions
 
 1. Emit lifecycle events for validation, planning, staging, archive creation, parity, image creation, verification, cleanup, and completion.
 2. Make event payloads stable, documented, and free of passphrases or plaintext file names unless the caller explicitly requests a privacy-reducing detail level.
@@ -190,7 +200,7 @@ Recovery-tool bundle distribution remains deferred to Phase 1.3. Phase 1.2 defin
 
 Implement the portable core test-first. Use fake archive, PAR2, image, verification, and recovery-tool adapters for unit and application tests. Reserve real-tool tests for Phase 1.3.
 
-1. Unit test capacity parsing, overhead reservation, deterministic allocation, and oversized-file splitting with table-driven cases.
+1. Unit test capacity and minimum split-size parsing, overhead reservation, deterministic allocation, and oversized-file splitting with table-driven cases, including zero, absolute, percentage, and invalid thresholds.
 2. Unit test manifest validation for missing, changed, duplicate, and unreadable source entries.
 3. Application test that each planned disc creates one independent archive payload and never references another disc's payload during normal recovery.
 4. Application test that parity receives GnuPG-encrypted artifact paths, not plaintext or unencrypted archive inputs.
