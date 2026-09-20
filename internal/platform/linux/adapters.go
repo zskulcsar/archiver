@@ -163,26 +163,49 @@ func (b *Backends) TestParityRepair(ctx context.Context, encrypted adapters.Arti
 	defer func() { _ = os.RemoveAll(workspace) }()
 
 	copyPath := filepath.Join(workspace, filepath.Base(encrypted.Path))
-	if err := copyFile(encrypted.Path, copyPath); err != nil {
-		return fmt.Errorf("copy encrypted payload for repair test: %w", err)
-	}
-	for _, artifact := range artifacts {
-		if err := copyFile(artifact.Path, filepath.Join(workspace, filepath.Base(artifact.Path))); err != nil {
-			return fmt.Errorf("copy PAR2 artifact for repair test: %w", err)
+	copyCtx, copySpan := observability.Start(ctx, "archiver.par2.repair_test.workspace_copy")
+	copyErr := func() error {
+		if err := copyFile(encrypted.Path, copyPath); err != nil {
+			return fmt.Errorf("copy encrypted payload for repair test: %w", err)
 		}
+		observability.RecordIO(copyCtx, "par2.repair_test.payload_copy_read", encrypted.Size)
+		observability.RecordIO(copyCtx, "par2.repair_test.payload_copy_write", encrypted.Size)
+		for _, artifact := range artifacts {
+			if err := copyFile(artifact.Path, filepath.Join(workspace, filepath.Base(artifact.Path))); err != nil {
+				return fmt.Errorf("copy PAR2 artifact for repair test: %w", err)
+			}
+			observability.RecordIO(copyCtx, "par2.repair_test.parity_copy_read", artifact.Size)
+			observability.RecordIO(copyCtx, "par2.repair_test.parity_copy_write", artifact.Size)
+		}
+		return nil
+	}()
+	observability.RecordError(copySpan, copyErr)
+	copySpan.End()
+	if copyErr != nil {
+		return copyErr
 	}
 	if err := corruptFile(copyPath); err != nil {
 		return fmt.Errorf("corrupt disposable encrypted payload: %w", err)
 	}
-	command := exec.CommandContext(ctx, b.tools.PAR2.Path, "repair", copyPath)
+	repairCtx, repairSpan := observability.Start(ctx, "archiver.par2.repair_test.repair")
+	command := exec.CommandContext(repairCtx, b.tools.PAR2.Path, "repair", copyPath)
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
-	if err := command.Run(); err != nil {
-		return fmt.Errorf("repair disposable encrypted payload: %w: %s", err, stderr.String())
+	repairErr := command.Run()
+	observability.RecordError(repairSpan, repairErr)
+	repairSpan.End()
+	if repairErr != nil {
+		return fmt.Errorf("repair disposable encrypted payload: %w: %s", repairErr, stderr.String())
 	}
-	match, err := filesMatch(encrypted.Path, copyPath)
-	if err != nil {
-		return fmt.Errorf("compare repaired encrypted payload: %w", err)
+	compareCtx, compareSpan := observability.Start(ctx, "archiver.par2.repair_test.compare")
+	match, compareErr := filesMatch(encrypted.Path, copyPath)
+	if compareErr == nil {
+		observability.RecordIO(compareCtx, "par2.repair_test.compare_read", encrypted.Size*2)
+	}
+	observability.RecordError(compareSpan, compareErr)
+	compareSpan.End()
+	if compareErr != nil {
+		return fmt.Errorf("compare repaired encrypted payload: %w", compareErr)
 	}
 	if !match {
 		return fmt.Errorf("PAR2 repair did not restore the encrypted payload")
