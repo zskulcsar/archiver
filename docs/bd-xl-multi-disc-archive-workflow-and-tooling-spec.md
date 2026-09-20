@@ -146,7 +146,7 @@ Encrypted archive creation and integrity protection are available on all three o
 
 | Capability | Suitable Tooling | Cross-Platform Status |
 |------------|------------------|-----------------------|
-| Archive creation and AES encryption | 7-Zip (`7zz`), DAR, GnuPG | Available on Linux, Windows, and macOS. |
+| Archive creation and AES encryption | PAX tar, GnuPG | Available on Linux, Windows, and macOS. |
 | Integrity verification and repair | `par2cmdline` / PAR2 | Available on Linux, Windows, and macOS. |
 | Disc image generation | `xorriso`, `cdrtools`, `Oscdimg` | Available, but requires an OS-specific adapter. |
 

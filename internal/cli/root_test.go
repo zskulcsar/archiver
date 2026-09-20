@@ -177,10 +177,10 @@ func TestExecute_CreateValidatesSourcesBeforeMissingBackend(t *testing.T) {
 	}
 }
 
-// * [x] **P1_CLI_010** Default create backend dependency error
+// * [x] **P1_CLI_010** Default create validates runtime prerequisites after planning
 // - Description: Runs create with a valid local source through the default CLI service composition.
-// - Expected: After source collection and planning, the command reports that the required archive tool backends are unavailable.
-func TestExecute_CreateReportsMissingBackendsAfterPlanning(t *testing.T) {
+// - Expected: After source collection and planning, it reports either unavailable tools or the required non-interactive passphrase input.
+func TestExecute_CreateReportsRuntimePrerequisiteAfterPlanning(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "photo.jpg")
 	if err := os.WriteFile(source, []byte("photo"), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -190,11 +190,11 @@ func TestExecute_CreateReportsMissingBackendsAfterPlanning(t *testing.T) {
 	var stderr bytes.Buffer
 	exitCode := Execute([]string{"create", "--capacity", "25GB", "--output", t.TempDir(), "--archive-name", "photos", source}, &stdout, &stderr, BuildInfo{Version: "dev"})
 
-	if exitCode != 4 {
-		t.Fatalf("Execute() exit code = %d, want 4; stderr = %q", exitCode, stderr.String())
+	if exitCode != 3 && exitCode != 4 {
+		t.Fatalf("Execute() exit code = %d, want 3 or 4; stderr = %q", exitCode, stderr.String())
 	}
-	if got, want := stderr.String(), "required archive, encryption, parity, and image backends are unavailable\n"; got != want {
-		t.Fatalf("Execute() stderr = %q, want %q", got, want)
+	if got := stderr.String(); !strings.Contains(got, "missing or unusable required Linux tools:") && !strings.Contains(got, "--passphrase-file is required") {
+		t.Fatalf("Execute() stderr = %q, want tool or passphrase prerequisite diagnostic", got)
 	}
 }
 
@@ -223,6 +223,54 @@ func TestExecuteWithServices_CreateWritesEventsFile(t *testing.T) {
 	}
 	if got, want := string(contents), "{\"type\":\"published\"}\n"; got != want {
 		t.Fatalf("events file = %q, want %q", got, want)
+	}
+}
+
+// * [x] **P1_CLI_011** Create reports its plan and lifecycle phases to the terminal
+// - Description: Runs create with a two-disc injected plan and lifecycle-emitting service.
+// - Expected: Terminal output includes effective parameters, aggregate source statistics, planned disc count, and readable disc progress.
+func TestExecuteWithServices_CreateReportsPlanAndProgress(t *testing.T) {
+	t.Parallel()
+
+	output := t.TempDir()
+	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
+	services := fakeServices{
+		plan: func(context.Context, app.ValidatedConfig) (domain.ArchivePlan, error) {
+			return domain.ArchivePlan{UsableCapacity: 90, Discs: []domain.Disc{
+				{Number: 1, Parts: []domain.Part{{SourcePath: "/source/a", LogicalPath: "a", Size: 10}}},
+				{Number: 2, Parts: []domain.Part{{SourcePath: "/source/b", LogicalPath: "b", Size: 20}}},
+			}}, nil
+		},
+		create: func(_ context.Context, _ app.ValidatedConfig, events app.EventSink) error {
+			for _, event := range []app.Event{
+				{Type: "validation_started"}, {Type: "validation_completed"}, {Type: "staging_started"},
+				{Type: "archive_started", Disc: 1}, {Type: "archive_completed", Disc: 1},
+				{Type: "parity_started", Disc: 1}, {Type: "parity_completed", Disc: 1},
+				{Type: "image_started", Disc: 1}, {Type: "image_verified", Disc: 1}, {Type: "disc_completed", Disc: 1},
+				{Type: "published"},
+			} {
+				if err := events.Emit(event); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := ExecuteWithServices([]string{"create", "--capacity", "1GB", "--output", output, "--archive-name", "photos", "--loss-tolerance", "20%", "--min-split-size", "50MB", "--events-file", eventsPath, "/input/photos"}, &stdout, &stderr, BuildInfo{Version: "dev"}, services)
+	if exitCode != 0 {
+		t.Fatalf("ExecuteWithServices() exit code = %d, want 0; stderr = %q", exitCode, stderr.String())
+	}
+	for _, wanted := range []string{
+		"Archive parameters:", "Capacity: 1GB", "Loss tolerance: 20%", "Minimum split size: 50MB",
+		"Source: 2 files, 30 bytes", "Plan: 2 discs", "Validating and hashing source ranges...",
+		"Disc 1/2: creating archive", "Disc 1/2: archive created and encrypted", "Disc 1/2: creating PAR2 recovery data",
+		"Disc 1/2: image verified", "Archive set published", "Archive set created",
+	} {
+		if !strings.Contains(stdout.String(), wanted) {
+			t.Fatalf("stdout = %q, want to contain %q", stdout.String(), wanted)
+		}
 	}
 }
 

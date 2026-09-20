@@ -12,7 +12,11 @@ import (
 type planFile struct {
 	FormatVersion        int        `json:"format_version"`
 	ArchiveSetID         string     `json:"archive_set_id"`
+	NominalCapacity      int64      `json:"nominal_capacity_bytes"`
 	UsableCapacity       int64      `json:"usable_capacity_bytes"`
+	ReservedCapacity     int64      `json:"reserved_capacity_bytes"`
+	LossTolerance        int        `json:"loss_tolerance_percent"`
+	ImageProfile         string     `json:"image_profile"`
 	MinimumSplitSize     string     `json:"minimum_split_size"`
 	ResolvedMinSplitSize int64      `json:"resolved_minimum_split_size_bytes"`
 	Discs                []planDisc `json:"discs"`
@@ -47,8 +51,9 @@ func WritePlanJSON(config ValidatedConfig, plan domain.ArchivePlan) (string, err
 		discs[i] = planDisc{Number: disc.Number, Used: disc.Used, Unused: disc.Unused, Parts: parts}
 	}
 	content, err := json.MarshalIndent(planFile{
-		FormatVersion: 1, ArchiveSetID: config.SetID, UsableCapacity: plan.UsableCapacity,
-		MinimumSplitSize: config.RequestedMinSplitSize, ResolvedMinSplitSize: config.MinSplitSize, Discs: discs,
+		FormatVersion: 1, ArchiveSetID: config.SetID, NominalCapacity: config.CapacityBytes, UsableCapacity: plan.UsableCapacity,
+		ReservedCapacity: config.CapacityBytes - plan.UsableCapacity, LossTolerance: config.LossPercent, ImageProfile: "linux-iso9660-level3-v1",
+		MinimumSplitSize: config.RequestedMinSplitSize, ResolvedMinSplitSize: plan.MinimumSplitSize, Discs: discs,
 	}, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal archive plan: %w", err)

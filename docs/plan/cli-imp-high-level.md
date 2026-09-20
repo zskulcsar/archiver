@@ -63,7 +63,7 @@ Define a versioned per-disc layout and a versioned archive-set manifest. Every d
 
 Define a small capability-based adapter boundary for external programs. The portable core asks adapters to create/extract encrypted archives, create/verify/repair PAR2 data, generate an image, enumerate writers, burn media, and read-back verify media. Adapters must report executable discovery, version, supported capabilities, invocation failures, and parsed verification results consistently.
 
-The initial adapter selection should favor 7-Zip archive creation in store mode, GnuPG encryption, and `par2cmdline` parity because they are available on all target operating systems. Image and optical adapters are selected per platform.
+The initial archive implementation uses portable PAX tar in store mode, followed by GnuPG encryption and `par2cmdline` parity. Image and optical adapters are selected per platform.
 
 ### 5. Artifact Verification and Reporting
 
@@ -77,15 +77,15 @@ The portable core must not import operating-system-specific optical-drive code. 
 
 - [ ] [Phase 1.3: Linux CLI backend](p1-linux-core/03-linux-cli.md#work)
 
-Use 7-Zip, GnuPG, and `par2cmdline`, then implement and validate an `xorriso`-based image, writer-discovery, burn, and checksum/read-back verification backend. Define the required device permissions and supported drive/media matrix.
+Use portable PAX tar, GnuPG, and `par2cmdline`, then implement and validate an `xorriso`-based image, writer-discovery, burn, and checksum/read-back verification backend. Define the required device permissions and supported drive/media matrix.
 
 ### Windows
 
-Use 7-Zip, GnuPG, and a PAR2-compatible tool, then implement image generation through a supported UDF/ISO backend such as `Oscdimg`. Select and validate a separate BD-XL burner and verification backend. The Windows plan must document installation, licence, executable discovery, and hardware requirements.
+Use portable PAX tar, GnuPG, and a PAR2-compatible tool, then implement image generation through a supported UDF/ISO backend such as `Oscdimg`. Select and validate a separate BD-XL burner and verification backend. The Windows plan must document installation, licence, executable discovery, and hardware requirements.
 
 ### macOS
 
-Use 7-Zip, GnuPG, and `par2cmdline`, then implement image generation through an available image backend such as `cdrtools` or `xorriso`. Treat direct writer discovery, burning, and read-back verification as experimental until validated with specific external drives, firmware, and BD-XL media.
+Use portable PAX tar, GnuPG, and `par2cmdline`, then implement image generation through an available image backend such as `cdrtools` or `xorriso`. Treat direct writer discovery, burning, and read-back verification as experimental until validated with specific external drives, firmware, and BD-XL media.
 
 ## Delivery Sequence
 

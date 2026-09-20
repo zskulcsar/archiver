@@ -20,12 +20,13 @@ type Artifact struct {
 type ToolIdentity struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
+	Path    string `json:"path,omitempty"`
 }
 
 // ArchiveRequest identifies the independent payload to stream for one disc.
 type ArchiveRequest struct {
-	Disc     domain.Disc
-	Symlinks []domain.Symlink
+	Disc       domain.Disc
+	Reassembly ReassemblyManifest
 }
 
 // ArchiveCreator streams one disc's archive payload to output.
@@ -38,10 +39,20 @@ type Encryptor interface {
 	Encrypt(ctx context.Context, input io.Reader, outputPath string) (Artifact, error)
 }
 
+// EncryptedVerifier verifies decryption and archive integrity before recovery data is created.
+type EncryptedVerifier interface {
+	VerifyEncrypted(ctx context.Context, encrypted Artifact) error
+}
+
 // ParityCreator creates and verifies local recovery data for encrypted artifacts.
 type ParityCreator interface {
 	CreateParity(ctx context.Context, input Artifact, outputDir string) ([]Artifact, error)
 	VerifyParity(ctx context.Context, artifacts []Artifact) error
+}
+
+// ParityRepairTester verifies that a generated PAR2 set repairs controlled corruption in a disposable copy.
+type ParityRepairTester interface {
+	TestParityRepair(ctx context.Context, encrypted Artifact, artifacts []Artifact) error
 }
 
 // ImageRequest identifies the verified encrypted disc layout to encode as an image.

@@ -2,7 +2,7 @@
 
 Archiver is a Go CLI for planning and creating encrypted, independently recoverable multi-disc archive images.
 
-The portable planning core is implemented. The initial real archive backend targets Linux; Windows and macOS adapters will follow.
+The portable planning core and the initial Linux image-only backend are implemented. Windows and macOS adapters will follow.
 
 ## Current State
 
@@ -15,7 +15,7 @@ Phase 1.2 provides a portable, testable planning core:
 - Writes an inspectable `<set-id>.plan.json` in the output parent, without exposing absolute source paths.
 - Uses staging directories, no-overwrite preflight, structured JSON Lines events, and actionable precondition failures.
 
-The real 7-Zip, GnuPG, PAR2, and image-generation adapters are deferred to Phase 1.3. As a result, `create` validates and plans its input but stops with exit code `4` before it can create archive media. `verify` also requires the future backend.
+On Linux, `create` discovers installed `gpg`, `par2`, and `xorriso` before staging output. It streams PAX tar payloads, including exact byte ranges for split files, through GnuPG AES-256 encryption with a private `--passphrase-file`, protects encrypted payloads with PAR2, creates ISO9660 Level 3 images, and verifies them before publication. `verify` checks published image integrity. Direct optical writing remains disabled pending an approved hardware compatibility-matrix entry.
 
 ## Planning Example
 
@@ -26,12 +26,26 @@ make build
 
 ./bin/archiver plan "$HOME/Downloads" \
   --archive-name downloads \
-  --capacity 8GB \
+  --capacity 1GB \
   --loss-tolerance 20% \
   --min-split-size 0MB \
   --events-file .tmp/downloads-plan.events.jsonl \
   --output .tmp/downloads-output
 ```
+
+## Linux Creation Example
+
+Install the required system tools, create a private passphrase file with mode `0600`, then run:
+
+```sh
+./bin/archiver create "$HOME/Downloads" \
+  --archive-name downloads \
+  --capacity 8GB \
+  --passphrase-file "$HOME/.config/archiver/passphrase" \
+  --output .tmp/downloads-output
+```
+
+See `docs/linux-image-profile.md` for supported tool interfaces and image-profile limits. See `docs/linux-hardware-compatibility.md` before considering any optical-media operation.
 
 The command prints the generated plan path and writes a layout such as:
 
@@ -80,7 +94,7 @@ Cross-compile the portable CLI without platform integrations:
 make build-cross
 ```
 
-External archive, encryption, parity, image, and optical-writing tools are not required for the portable core. They are discovered from the local system in Phase 1.3; Archiver does not download or execute them automatically.
+External archive, encryption, parity, and image tools are required only for Linux `create` and `verify`. They are discovered from the local system; Archiver does not download, install, or upgrade them automatically.
 
 Small synthetic test fixtures may be committed. Generated archives, images, and large fixtures must not be committed.
 
@@ -91,7 +105,7 @@ Small synthetic test fixtures may be committed. Generated archives, images, and 
 - `internal/app`: source validation, output preflight, plan output, archive orchestration, metadata, events, and reporting.
 - `internal/adapters`: SQLite source-manifest storage and contracts for archive, encryption, parity, and image backends.
 - `internal/cli`: Cobra command parsing, terminal output, event-file handling, and exit-code mapping.
-- `internal/platform/linux`: Linux local/network filesystem classifier; real external-tool adapters are Phase 1.3 work.
+- `internal/platform/linux`: Linux filesystem classifier, tool discovery, secure passphrase-file validation, and external-tool image-only adapters.
 - `internal/*/*_test.go`: unit and fake-adapter application tests; no real archive tools or optical hardware are required.
 - `apps`: reserved for future native GUIs.
 - `packaging`: reserved for future OS-specific packages.

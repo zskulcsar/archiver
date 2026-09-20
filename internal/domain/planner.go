@@ -38,8 +38,9 @@ type Disc struct {
 
 // ArchivePlan is the deterministic assignment of archive members to discs.
 type ArchivePlan struct {
-	UsableCapacity int64
-	Discs          []Disc
+	UsableCapacity   int64
+	MinimumSplitSize int64
+	Discs            []Disc
 }
 
 // Plan assigns sources to discs in canonical logical-path order.
@@ -72,10 +73,10 @@ func PlanWithMinimumSplitSize(sources []Source, usableCapacity, minimumSplitSize
 		}
 	}
 	if len(ordered) == 0 {
-		return ArchivePlan{UsableCapacity: usableCapacity}, nil
+		return ArchivePlan{UsableCapacity: usableCapacity, MinimumSplitSize: minimumSplitSize}, nil
 	}
 
-	plan := ArchivePlan{UsableCapacity: usableCapacity}
+	plan := ArchivePlan{UsableCapacity: usableCapacity, MinimumSplitSize: minimumSplitSize}
 	current := Disc{Number: 1}
 	for _, source := range ordered {
 		remaining := source.Size

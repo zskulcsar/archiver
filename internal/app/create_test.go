@@ -25,6 +25,7 @@ func TestCreate_PublishesVerifiedEncryptedDiscImages(t *testing.T) {
 
 	output := t.TempDir()
 	config := testValidatedConfig(output)
+	sourcePath := writeCreateTestSource(t, output)
 	var events bytes.Buffer
 	backends := &fakeBackends{payload: "archive-data"}
 
@@ -32,7 +33,7 @@ func TestCreate_PublishesVerifiedEncryptedDiscImages(t *testing.T) {
 		Config: config,
 		Plan: domain.ArchivePlan{Discs: []domain.Disc{{
 			Number: 1,
-			Parts:  []domain.Part{{LogicalPath: "photo.jpg", Size: 12}},
+			Parts:  []domain.Part{{SourcePath: sourcePath, LogicalPath: "photo.jpg", Size: 12}},
 		}}},
 		Backends: backends,
 		Events:   NewJSONLEventWriter(&events),
@@ -72,13 +73,14 @@ func TestCreate_PassesSymlinkMembersToArchiveAdapter(t *testing.T) {
 
 	output := t.TempDir()
 	config := testValidatedConfig(output)
+	sourcePath := writeCreateTestSource(t, output)
 	backends := &fakeBackends{payload: "archive-data"}
 	err := Create(context.Background(), CreateRequest{
 		Config: config,
 		Plan: domain.ArchivePlan{Discs: []domain.Disc{{
 			Number: 1,
 			Parts: []domain.Part{
-				{LogicalPath: "photo.jpg", Size: 12},
+				{SourcePath: sourcePath, LogicalPath: "photo.jpg", Size: 12},
 				{LogicalPath: "latest.jpg", SymlinkTarget: "photo.jpg"},
 			},
 		}}},
@@ -88,8 +90,9 @@ func TestCreate_PassesSymlinkMembersToArchiveAdapter(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 
-	if got, want := backends.archiveRequest.Symlinks, []domain.Symlink{{LogicalPath: "latest.jpg", TargetPath: "photo.jpg"}}; len(got) != len(want) || got[0] != want[0] {
-		t.Fatalf("archive symlinks = %#v, want %#v", got, want)
+	parts := backends.archiveRequest.Disc.Parts
+	if got, want := parts[1], (domain.Part{LogicalPath: "latest.jpg", SymlinkTarget: "photo.jpg"}); got != want {
+		t.Fatalf("archive symlink part = %#v, want %#v", got, want)
 	}
 }
 
@@ -103,6 +106,12 @@ func TestCreate_PersistsRecoveryMetadataAndReport(t *testing.T) {
 	config := testValidatedConfig(output)
 	config.CapacityBytes = 100
 	sourcePath := filepath.Join(output, "private", "photo.jpg")
+	if err := os.Mkdir(filepath.Dir(sourcePath), 0o700); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	if err := os.WriteFile(sourcePath, []byte("photo-data12"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
 	backends := &fakeBackends{payload: "archive-data"}
 	err := Create(context.Background(), CreateRequest{
 		Config: config,
@@ -117,7 +126,7 @@ func TestCreate_PersistsRecoveryMetadataAndReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	if got, want := len(backends.imageInput.Metadata), 2; got != want {
+	if got, want := len(backends.imageInput.Metadata), 3; got != want {
 		t.Fatalf("image metadata count = %d, want %d", got, want)
 	}
 
@@ -146,7 +155,7 @@ func TestCreate_PersistsRecoveryMetadataAndReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read recovery instructions: %v", err)
 	}
-	if !strings.Contains(string(instructions), "disc-01.payload.enc") || !strings.Contains(string(instructions), "not-included") || !strings.Contains(string(instructions), "fake-encrypt (1.0)") {
+	if !strings.Contains(string(instructions), "disc-01.payload.enc") || !strings.Contains(string(instructions), "recovery-tool-retrieval-material") || !strings.Contains(string(instructions), "fake-encrypt (1.0)") {
 		t.Fatalf("recovery instructions = %q, want artifact and tool-bundle identities", instructions)
 	}
 
@@ -158,7 +167,7 @@ func TestCreate_PersistsRecoveryMetadataAndReport(t *testing.T) {
 		t.Fatalf("report actual_capacity_bytes = %v, want %v", got, want)
 	}
 	toolBundle := report["recovery_tool_bundle"].(map[string]any)
-	if got, want := toolBundle["name"], "not-included"; got != want {
+	if got, want := toolBundle["name"], "recovery-tool-retrieval-material"; got != want {
 		t.Fatalf("report recovery tool bundle = %v, want %v", got, want)
 	}
 	images := report["images"].([]any)
@@ -203,14 +212,95 @@ func TestCreate_CancellationLeavesNoPublishedOutput(t *testing.T) {
 	}
 }
 
+// * [x] **P1_LINUX_007** Zero loss tolerance omits local recovery artifacts
+// - Description: Creates a disc using a zero-percent loss tolerance and recording fake backends.
+// - Expected: PAR2 creation and verification are skipped and the image receives no parity artifacts.
+func TestCreate_ZeroLossToleranceSkipsParity(t *testing.T) {
+	t.Parallel()
+
+	output := t.TempDir()
+	config := testValidatedConfig(output)
+	config.LossPercent = 0
+	sourcePath := writeCreateTestSource(t, output)
+	backends := &fakeBackends{payload: "archive-data"}
+	if err := Create(context.Background(), CreateRequest{
+		Config:   config,
+		Plan:     domain.ArchivePlan{Discs: []domain.Disc{{Number: 1, Parts: []domain.Part{{SourcePath: sourcePath, LogicalPath: "photo.jpg", Size: 12}}}}},
+		Backends: backends,
+	}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if backends.parityCalled {
+		t.Fatal("CreateParity() was called with zero loss tolerance")
+	}
+	if got := len(backends.imageInput.Parity); got != 0 {
+		t.Fatalf("image parity artifacts = %d, want 0", got)
+	}
+}
+
+// * [x] **P1_LINUX_009** Encrypted payload verification precedes PAR2 generation
+// - Description: Creates a disc with backends that expose encrypted archive verification and record parity creation.
+// - Expected: The encrypted payload is verified before local recovery data is generated.
+func TestCreate_VerifiesEncryptedArchiveBeforeParity(t *testing.T) {
+	t.Parallel()
+
+	output := t.TempDir()
+	backends := &verifyingBackends{fakeBackends: fakeBackends{payload: "archive-data"}}
+	sourcePath := writeCreateTestSource(t, output)
+	err := Create(context.Background(), CreateRequest{
+		Config:   testValidatedConfig(output),
+		Plan:     domain.ArchivePlan{Discs: []domain.Disc{{Number: 1, Parts: []domain.Part{{SourcePath: sourcePath, LogicalPath: "photo.jpg", Size: 12}}}}},
+		Backends: backends,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if !backends.verifiedEncrypted {
+		t.Fatal("encrypted archive was not verified")
+	}
+}
+
+// * [x] **P1_LINUX_011** PAR2 repair testing follows parity verification
+// - Description: Creates a disc with a backend that performs a disposable PAR2 repair test.
+// - Expected: The repair test receives the encrypted payload and generated PAR2 artifacts.
+func TestCreate_TestsParityRepair(t *testing.T) {
+	t.Parallel()
+
+	output := t.TempDir()
+	backends := &repairTestingBackends{fakeBackends: fakeBackends{payload: "archive-data"}}
+	sourcePath := writeCreateTestSource(t, output)
+	err := Create(context.Background(), CreateRequest{
+		Config:   testValidatedConfig(output),
+		Plan:     domain.ArchivePlan{Discs: []domain.Disc{{Number: 1, Parts: []domain.Part{{SourcePath: sourcePath, LogicalPath: "photo.jpg", Size: 12}}}}},
+		Backends: backends,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if !backends.repairTested {
+		t.Fatal("PAR2 repair test was not called")
+	}
+}
+
 func testValidatedConfig(output string) ValidatedConfig {
 	return ValidatedConfig{
 		Config:        Config{Output: output},
 		CapacityBytes: 100,
+		LossPercent:   10,
 		SetID:         "test_2026-09-13_14-05",
 		StagingPath:   filepath.Join(output, ".archiver-staging-test_2026-09-13_14-05"),
 		FinalPath:     filepath.Join(output, "test_2026-09-13_14-05"),
 	}
+}
+
+func writeCreateTestSource(t *testing.T, output string) string {
+	t.Helper()
+
+	path := filepath.Join(output, "photo.jpg")
+	if err := os.WriteFile(path, []byte("photo-data12"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	return path
 }
 
 func readJSONFile(t *testing.T, path string) map[string]any {
@@ -232,8 +322,29 @@ type fakeBackends struct {
 	archiveCalled  bool
 	archiveRequest adapters.ArchiveRequest
 	parityInput    string
+	parityCalled   bool
 	imageInput     adapters.ImageRequest
 	imageVerified  bool
+}
+
+type verifyingBackends struct {
+	fakeBackends
+	verifiedEncrypted bool
+}
+
+type repairTestingBackends struct {
+	fakeBackends
+	repairTested bool
+}
+
+func (f *repairTestingBackends) TestParityRepair(context.Context, adapters.Artifact, []adapters.Artifact) error {
+	f.repairTested = true
+	return nil
+}
+
+func (f *verifyingBackends) VerifyEncrypted(context.Context, adapters.Artifact) error {
+	f.verifiedEncrypted = true
+	return nil
 }
 
 func (f *fakeBackends) CreateArchive(_ context.Context, request adapters.ArchiveRequest, output io.Writer) error {
@@ -255,6 +366,7 @@ func (f *fakeBackends) Encrypt(_ context.Context, input io.Reader, outputPath st
 }
 
 func (f *fakeBackends) CreateParity(_ context.Context, input adapters.Artifact, outputDir string) ([]adapters.Artifact, error) {
+	f.parityCalled = true
 	f.parityInput = input.Path
 	path := filepath.Join(outputDir, "disc-01.par2")
 	if err := os.WriteFile(path, []byte("parity"), 0o600); err != nil {

@@ -70,6 +70,16 @@ func Create(ctx context.Context, request CreateRequest) (err error) {
 	if err := PreflightCapacity(request.Config, request.Plan, request.DiskSpace); err != nil {
 		return err
 	}
+	if err := emit(request.Events, Event{Type: "validation_started"}); err != nil {
+		return err
+	}
+	reassembly, err := adapters.BuildReassemblyManifest(ctx, request.Config.SetID, request.Plan)
+	if err != nil {
+		return fmt.Errorf("build reassembly manifest: %w", err)
+	}
+	if err := emit(request.Events, Event{Type: "validation_completed"}); err != nil {
+		return err
+	}
 	if err := os.Mkdir(request.Config.StagingPath, 0o700); err != nil {
 		return fmt.Errorf("create staging directory: %w", err)
 	}
@@ -87,7 +97,7 @@ func Create(ctx context.Context, request CreateRequest) (err error) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		result, err := createDisc(ctx, request, disc)
+		result, err := createDisc(ctx, request, reassembly, disc)
 		if err != nil {
 			return err
 		}
@@ -112,36 +122,43 @@ func Create(ctx context.Context, request CreateRequest) (err error) {
 	return nil
 }
 
-func createDisc(ctx context.Context, request CreateRequest, disc domain.Disc) (discResult, error) {
+func createDisc(ctx context.Context, request CreateRequest, reassembly adapters.ReassemblyManifest, disc domain.Disc) (discResult, error) {
 	if err := emit(request.Events, Event{Type: "archive_started", Disc: disc.Number}); err != nil {
 		return discResult{}, err
 	}
 	payloadPath := filepath.Join(request.Config.StagingPath, fmt.Sprintf("disc-%02d.payload.enc", disc.Number))
-	symlinks := make([]domain.Symlink, 0)
-	for _, part := range disc.Parts {
-		if part.SymlinkTarget != "" {
-			symlinks = append(symlinks, domain.Symlink{LogicalPath: part.LogicalPath, TargetPath: part.SymlinkTarget})
-		}
-	}
-	encrypted, err := streamEncrypt(ctx, request.Backends, adapters.ArchiveRequest{Disc: disc, Symlinks: symlinks}, payloadPath)
+	encrypted, err := streamEncrypt(ctx, request.Backends, adapters.ArchiveRequest{Disc: disc, Reassembly: reassembly}, payloadPath)
 	if err != nil {
 		return discResult{}, fmt.Errorf("create encrypted payload for disc %d: %w", disc.Number, err)
+	}
+	if verifier, ok := request.Backends.(adapters.EncryptedVerifier); ok {
+		if err := verifier.VerifyEncrypted(ctx, encrypted); err != nil {
+			return discResult{}, VerificationError{Err: fmt.Errorf("verify encrypted payload for disc %d: %w", disc.Number, err)}
+		}
 	}
 	if err := emit(request.Events, Event{Type: "archive_completed", Disc: disc.Number}); err != nil {
 		return discResult{}, err
 	}
-	if err := emit(request.Events, Event{Type: "parity_started", Disc: disc.Number}); err != nil {
-		return discResult{}, err
-	}
-	parity, err := request.Backends.CreateParity(ctx, encrypted, request.Config.StagingPath)
-	if err != nil {
-		return discResult{}, fmt.Errorf("create parity for disc %d: %w", disc.Number, err)
-	}
-	if err := request.Backends.VerifyParity(ctx, parity); err != nil {
-		return discResult{}, VerificationError{Err: fmt.Errorf("verify parity for disc %d: %w", disc.Number, err)}
-	}
-	if err := emit(request.Events, Event{Type: "parity_completed", Disc: disc.Number}); err != nil {
-		return discResult{}, err
+	var parity []adapters.Artifact
+	if request.Config.LossPercent > 0 {
+		if err := emit(request.Events, Event{Type: "parity_started", Disc: disc.Number}); err != nil {
+			return discResult{}, err
+		}
+		parity, err = request.Backends.CreateParity(ctx, encrypted, request.Config.StagingPath)
+		if err != nil {
+			return discResult{}, fmt.Errorf("create parity for disc %d: %w", disc.Number, err)
+		}
+		if err := request.Backends.VerifyParity(ctx, parity); err != nil {
+			return discResult{}, VerificationError{Err: fmt.Errorf("verify parity for disc %d: %w", disc.Number, err)}
+		}
+		if tester, ok := request.Backends.(adapters.ParityRepairTester); ok {
+			if err := tester.TestParityRepair(ctx, encrypted, parity); err != nil {
+				return discResult{}, VerificationError{Err: fmt.Errorf("test PAR2 repair for disc %d: %w", disc.Number, err)}
+			}
+		}
+		if err := emit(request.Events, Event{Type: "parity_completed", Disc: disc.Number}); err != nil {
+			return discResult{}, err
+		}
 	}
 	artifacts := make([]artifactMetadata, 0, len(parity)+1)
 	payloadMetadata, err := metadataForArtifact(encrypted, "encrypted_payload")

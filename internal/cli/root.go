@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -94,6 +96,7 @@ func formatVersion(buildInfo BuildInfo) string {
 // Backend is one discovered adapter and its portable capability status.
 type Backend struct {
 	Name         string
+	Path         string
 	Version      string
 	Available    bool
 	Capabilities []string
@@ -118,7 +121,15 @@ func defaultServices() Services {
 }
 
 func (s portableServices) Backends(context.Context) ([]Backend, error) {
-	return nil, nil
+	statuses := platformlinux.DiscoverToolStatuses(context.Background(), platformlinux.ToolPaths{}, exec.LookPath, platformlinux.ExecRunner{})
+	gpg := statuses["gpg"]
+	par2 := statuses["par2"]
+	xorriso := statuses["xorriso"]
+	return []Backend{
+		{Name: gpg.Tool.Name, Path: gpg.Tool.Path, Version: gpg.Tool.Version, Available: gpg.Available, Capabilities: []string{"symmetric-encryption", "decrypt"}},
+		{Name: par2.Tool.Name, Path: par2.Tool.Path, Version: par2.Tool.Version, Available: par2.Available, Capabilities: []string{"parity-create", "parity-verify", "parity-repair"}},
+		{Name: xorriso.Tool.Name, Path: xorriso.Tool.Path, Version: xorriso.Tool.Version, Available: xorriso.Available, Capabilities: []string{"image-create", "image-verify", "writer-discovery", "burn-disabled"}},
+	}, nil
 }
 
 func (s portableServices) Plan(ctx context.Context, config app.ValidatedConfig) (domain.ArchivePlan, error) {
@@ -126,22 +137,70 @@ func (s portableServices) Plan(ctx context.Context, config app.ValidatedConfig) 
 	if err != nil {
 		return domain.ArchivePlan{}, err
 	}
-	plan, err := domain.PlanWithMinimumSplitSize(sources, config.CapacityBytes, config.MinSplitSize)
+	usableCapacity, err := (app.LinuxISOProfile{}).UsablePayloadCapacity(config.CapacityBytes, config.LossPercent, len(sources))
+	if err != nil {
+		return domain.ArchivePlan{}, fmt.Errorf("calculate Linux image capacity: %w", err)
+	}
+	minimumSplitSize, err := domain.ParseMinimumSplitSize(config.RequestedMinSplitSize, usableCapacity)
+	if err != nil {
+		return domain.ArchivePlan{}, fmt.Errorf("resolve minimum split size: %w", err)
+	}
+	plan, err := domain.PlanWithMinimumSplitSize(sources, usableCapacity, minimumSplitSize)
 	if err != nil {
 		return domain.ArchivePlan{}, fmt.Errorf("plan archive: %w", err)
 	}
 	return plan, nil
 }
 
-func (s portableServices) Create(ctx context.Context, config app.ValidatedConfig, _ app.EventSink) error {
-	if _, err := s.Plan(ctx, config); err != nil {
+func (s portableServices) Create(ctx context.Context, config app.ValidatedConfig, events app.EventSink) error {
+	plan, err := s.Plan(ctx, config)
+	if err != nil {
 		return err
 	}
-	return dependencyError{errors.New("required archive, encryption, parity, and image backends are unavailable")}
+	tools, err := platformlinux.DiscoverTools(ctx, platformlinux.ToolPaths{}, exec.LookPath, platformlinux.ExecRunner{})
+	if err != nil {
+		return dependencyError{err}
+	}
+	if config.PassphraseFile == "" {
+		return configurationError{errors.New("--passphrase-file is required for non-interactive Linux creation")}
+	}
+	if err := platformlinux.ValidatePassphraseFile(config.PassphraseFile); err != nil {
+		return configurationError{err}
+	}
+	return app.Create(ctx, app.CreateRequest{
+		Config: config, Plan: plan, Backends: platformlinux.NewBackends(tools, config.PassphraseFile, config.LossPercent), Events: events,
+	})
 }
 
-func (portableServices) Verify(context.Context, string, app.EventSink) error {
-	return dependencyError{errors.New("archive-set verification backend is not configured")}
+func (portableServices) Verify(ctx context.Context, archiveSetPath string, events app.EventSink) error {
+	tools, err := platformlinux.DiscoverTools(ctx, platformlinux.ToolPaths{}, exec.LookPath, platformlinux.ExecRunner{})
+	if err != nil {
+		return dependencyError{err}
+	}
+	entries, err := os.ReadDir(archiveSetPath)
+	if err != nil {
+		return fmt.Errorf("read archive set: %w", err)
+	}
+	backends := platformlinux.NewBackends(tools, "", 0)
+	images := 0
+	for _, entry := range entries {
+		if filepath.Ext(entry.Name()) != ".img" {
+			continue
+		}
+		images++
+		if err := backends.VerifyImage(ctx, adapters.Artifact{Path: filepath.Join(archiveSetPath, entry.Name())}); err != nil {
+			return app.VerificationError{Err: err}
+		}
+		if events != nil {
+			if err := events.Emit(app.Event{Type: "image_verified", Disc: images}); err != nil {
+				return err
+			}
+		}
+	}
+	if images == 0 {
+		return fmt.Errorf("archive set contains no image files")
+	}
+	return nil
 }
 
 func (s portableServices) sources(ctx context.Context, config app.ValidatedConfig) ([]domain.Source, error) {
@@ -209,7 +268,7 @@ func newBackendsCommand(services Services) *cobra.Command {
 				return err
 			}
 			for _, backend := range backends {
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\tavailable=%t\tversion=%s\n", backend.Name, backend.Available, backend.Version); err != nil {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\tavailable=%t\tversion=%s\tpath=%s\tcapabilities=%s\n", backend.Name, backend.Available, backend.Version, backend.Path, strings.Join(backend.Capabilities, ",")); err != nil {
 					return err
 				}
 			}
@@ -267,13 +326,21 @@ func newCreateCommand(services Services) *cobra.Command {
 			if err := app.PreflightOutput(validated); err != nil {
 				return configurationError{err}
 			}
+			plan, err := services.Plan(cmd.Context(), validated)
+			if err != nil {
+				return err
+			}
+			if err := writeCreateSummary(cmd.OutOrStdout(), validated, plan); err != nil {
+				return err
+			}
 			events, closeEvents, err := openConfigEvents(validated)
 			if err != nil {
 				return configurationError{err}
 			}
 			defer closeEvents()
 			validated.EventsFile = ""
-			if err := services.Create(cmd.Context(), validated, events); err != nil {
+			terminalEvents := terminalEventSink{events: events, output: cmd.OutOrStdout(), discCount: len(plan.Discs)}
+			if err := services.Create(cmd.Context(), validated, terminalEvents); err != nil {
 				return err
 			}
 			_, err = fmt.Fprintln(cmd.OutOrStdout(), "Archive set created")
@@ -282,6 +349,81 @@ func newCreateCommand(services Services) *cobra.Command {
 	}
 	addArchiveConfigFlags(command, &config, true)
 	return command
+}
+
+type terminalEventSink struct {
+	events    app.EventSink
+	output    io.Writer
+	discCount int
+}
+
+func (s terminalEventSink) Emit(event app.Event) error {
+	if s.events != nil {
+		if err := s.events.Emit(event); err != nil {
+			return err
+		}
+	}
+	message := formatTerminalEvent(event, s.discCount)
+	if message == "" {
+		return nil
+	}
+	_, err := fmt.Fprintln(s.output, message)
+	return err
+}
+
+func writeCreateSummary(output io.Writer, config app.ValidatedConfig, plan domain.ArchivePlan) error {
+	files, bytes := sourcePlanStatistics(plan)
+	_, err := fmt.Fprintf(output, "Archive parameters:\n  Capacity: %s\n  Usable payload per disc: %d bytes\n  Loss tolerance: %d%%\n  Minimum split size: %s\nSource: %d files, %d bytes\nPlan: %d discs\n", config.Capacity, plan.UsableCapacity, config.LossPercent, config.RequestedMinSplitSize, files, bytes, len(plan.Discs))
+	return err
+}
+
+func sourcePlanStatistics(plan domain.ArchivePlan) (int, int64) {
+	files := make(map[string]int64)
+	for _, disc := range plan.Discs {
+		for _, part := range disc.Parts {
+			if part.SymlinkTarget != "" {
+				continue
+			}
+			if end := part.Offset + part.Size; end > files[part.LogicalPath] {
+				files[part.LogicalPath] = end
+			}
+		}
+	}
+	var bytes int64
+	for _, size := range files {
+		bytes += size
+	}
+	return len(files), bytes
+}
+
+func formatTerminalEvent(event app.Event, discCount int) string {
+	disc := fmt.Sprintf("Disc %d/%d", event.Disc, discCount)
+	switch event.Type {
+	case "validation_started":
+		return "Validating and hashing source ranges..."
+	case "validation_completed":
+		return "Source ranges validated."
+	case "staging_started":
+		return "Preparing archive staging area..."
+	case "archive_started":
+		return disc + ": creating archive and encrypting"
+	case "archive_completed":
+		return disc + ": archive created and encrypted"
+	case "parity_started":
+		return disc + ": creating PAR2 recovery data"
+	case "parity_completed":
+		return disc + ": PAR2 recovery data verified"
+	case "image_started":
+		return disc + ": creating image"
+	case "image_verified":
+		return disc + ": image verified"
+	case "disc_completed":
+		return disc + ": completed"
+	case "published":
+		return "Archive set published."
+	default:
+		return ""
+	}
 }
 
 func newVerifyCommand(services Services) *cobra.Command {

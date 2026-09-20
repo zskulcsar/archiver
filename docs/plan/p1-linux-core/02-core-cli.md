@@ -130,7 +130,7 @@ The first release creates archives in store mode without compression. It does no
 
 The archive adapter must calculate a conservative maximum artifact size from raw source bytes plus bounded archive structural overhead. The planner combines that bound with bounded GnuPG encryption overhead, selected loss-tolerance recovery data, manifest/recovery metadata, and image filesystem overhead. This bound, rather than an expected compressed size, determines disc allocation and preflight capacity.
 
-The initial Linux 7-Zip adapter uses its documented copy/store mode. Compression may be introduced only in a later version with an explicit capacity-planning strategy that remains safe for all input data.
+The initial portable archive adapter writes PAX tar in store mode. Compression may be introduced only in a later version with an explicit capacity-planning strategy that remains safe for all input data.
 
 ## Output Layout and Publication
 
@@ -218,7 +218,7 @@ Implement the portable core test-first. Use fake archive, PAR2, image, verificat
 
 ## Explicitly Deferred
 
-- Concrete `7zz`, GnuPG, `par2cmdline`, and image-tool process adapters.
+- Concrete GnuPG, `par2cmdline`, and image-tool process adapters.
 - Optical writer discovery, burning, and read-back verification.
 - Validation with real optical media.
 - Windows and macOS adapter implementations.

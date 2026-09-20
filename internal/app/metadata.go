@@ -15,7 +15,7 @@ import (
 
 const persistedFormatVersion = 1
 
-var phaseOneToolBundle = adapters.ToolIdentity{Name: "not-included", Version: "phase-1.2 placeholder"}
+var phaseOneToolBundle = adapters.ToolIdentity{Name: "recovery-tool-retrieval-material", Version: "linux-v1"}
 
 type artifactMetadata struct {
 	Name   string                `json:"name"`
@@ -99,10 +99,32 @@ func writeDiscMetadata(stagingPath string, setID string, plannedCapacity int64, 
 	if err := writeJSON(manifestPath, manifest); err != nil {
 		return "", nil, err
 	}
+	bundleName := "recovery-tools.txt"
+	bundlePath := filepath.Join(stagingPath, bundleName)
+	if err := writeRecoveryToolMaterial(bundlePath); err != nil {
+		return "", nil, err
+	}
 	return manifestName, []adapters.Artifact{
 		{Path: manifestPath, Format: "application/json"},
 		{Path: instructionsPath, Format: "text/plain"},
+		{Path: bundlePath, Format: "text/plain"},
 	}, nil
+}
+
+func writeRecoveryToolMaterial(path string) error {
+	const material = `Recovery tool retrieval material
+
+This archive requires a PAX tar-compatible extractor, GnuPG, and par2cmdline.
+PAX tar: https://pubs.opengroup.org/onlinepubs/9699919799/utilities/pax.html
+GnuPG: https://gnupg.org/ (GPL-3.0-or-later)
+par2cmdline: https://github.com/Parchive/par2cmdline (GPL-2.0-or-later)
+
+Use the system tar implementation or Archiver to read the encrypted PAX tar payload, and verify third-party tool releases using their upstream procedures.
+`
+	if err := os.WriteFile(path, []byte(material), 0o600); err != nil {
+		return fmt.Errorf("write recovery tool material: %w", err)
+	}
+	return nil
 }
 
 func writeRecoveryInstructions(path, setID string, discNumber int, artifacts []artifactMetadata) error {
