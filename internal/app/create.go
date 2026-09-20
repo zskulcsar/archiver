@@ -10,6 +10,8 @@ import (
 
 	"github.com/zskulcsar/archiver/internal/adapters"
 	"github.com/zskulcsar/archiver/internal/domain"
+	"github.com/zskulcsar/archiver/internal/observability"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // Event is a stable, privacy-preserving create lifecycle event.
@@ -58,6 +60,11 @@ type CreateRequest struct {
 
 // Create builds verified disc images in staging then atomically publishes the archive set.
 func Create(ctx context.Context, request CreateRequest) (err error) {
+	ctx, span := observability.Start(ctx, "archiver.create", attribute.Int("archiver.disc.count", len(request.Plan.Discs)), attribute.Int("archiver.loss_percent", request.Config.LossPercent))
+	defer func() {
+		observability.RecordError(span, err)
+		span.End()
+	}()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -73,7 +80,10 @@ func Create(ctx context.Context, request CreateRequest) (err error) {
 	if err := emit(request.Events, Event{Type: "validation_started"}); err != nil {
 		return err
 	}
-	reassembly, err := adapters.BuildReassemblyManifest(ctx, request.Config.SetID, request.Plan)
+	hashCtx, hashSpan := observability.Start(ctx, "archiver.reassembly.build")
+	reassembly, err := adapters.BuildReassemblyManifest(hashCtx, request.Config.SetID, request.Plan)
+	observability.RecordError(hashSpan, err)
+	hashSpan.End()
 	if err != nil {
 		return fmt.Errorf("build reassembly manifest: %w", err)
 	}
@@ -123,6 +133,8 @@ func Create(ctx context.Context, request CreateRequest) (err error) {
 }
 
 func createDisc(ctx context.Context, request CreateRequest, reassembly adapters.ReassemblyManifest, disc domain.Disc) (discResult, error) {
+	ctx, span := observability.Start(ctx, "archiver.disc.create", attribute.Int("archiver.disc.number", disc.Number), attribute.Int64("archiver.disc.planned_bytes", disc.Used))
+	defer span.End()
 	if err := emit(request.Events, Event{Type: "archive_started", Disc: disc.Number}); err != nil {
 		return discResult{}, err
 	}
@@ -197,7 +209,13 @@ func createDisc(ctx context.Context, request CreateRequest, reassembly adapters.
 	if err := emit(request.Events, Event{Type: "image_verified", Disc: disc.Number}); err != nil {
 		return discResult{}, err
 	}
+	hashCtx, hashSpan := observability.Start(ctx, "archiver.image.hash", attribute.Int("archiver.disc.number", disc.Number))
 	imageMetadata, err := metadataForArtifact(image, "image")
+	if err == nil {
+		observability.RecordIO(hashCtx, "image.hash_read", imageMetadata.Size)
+	}
+	observability.RecordError(hashSpan, err)
+	hashSpan.End()
 	if err != nil {
 		return discResult{}, err
 	}
@@ -221,6 +239,8 @@ func createDisc(ctx context.Context, request CreateRequest, reassembly adapters.
 }
 
 func streamEncrypt(ctx context.Context, backends CreateBackends, archive adapters.ArchiveRequest, outputPath string) (adapters.Artifact, error) {
+	ctx, span := observability.Start(ctx, "archiver.archive.encrypt_stream", attribute.Int("archiver.disc.number", archive.Disc.Number))
+	defer span.End()
 	reader, writer := io.Pipe()
 	archiveErr := make(chan error, 1)
 	go func() {

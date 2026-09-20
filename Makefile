@@ -13,6 +13,9 @@
 	verify \
 	build \
 	build-cross \
+	otel-up \
+	otel-down \
+	otel-logs \
 	clean
 
 VERSION ?= dev
@@ -63,6 +66,15 @@ build-cross: ## Cross-compile the portable CLI for Linux, Windows, and macOS.
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-X main.version=$(VERSION) -X main.revision=$(REVISION)" -o bin/archiver-linux-amd64 ./cmd/archiver
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-X main.version=$(VERSION) -X main.revision=$(REVISION)" -o bin/archiver-windows-amd64.exe ./cmd/archiver
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-X main.version=$(VERSION) -X main.revision=$(REVISION)" -o bin/archiver-darwin-arm64 ./cmd/archiver
+
+otel-up: ## Start the local Grafana OpenTelemetry development stack.
+	podman run --detach --replace --name archiver-otel-lgtm --publish 127.0.0.1:3000:3000 --publish 127.0.0.1:4318:4318 --volume archiver-otel-lgtm-data:/data:Z docker.io/grafana/otel-lgtm:latest
+
+otel-down: ## Stop the local Grafana OpenTelemetry development stack.
+	podman rm --force archiver-otel-lgtm
+
+otel-logs: ## Follow local Grafana OpenTelemetry stack logs.
+	podman logs --follow archiver-otel-lgtm
 
 clean: ## Remove generated build and test artifacts.
 	rm -rf bin coverage.out

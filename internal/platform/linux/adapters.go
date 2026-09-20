@@ -12,6 +12,8 @@ import (
 	"sort"
 
 	"github.com/zskulcsar/archiver/internal/adapters"
+	"github.com/zskulcsar/archiver/internal/observability"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // Backends implements image-only creation with a portable PAX tar creator and Linux system tools.
@@ -28,7 +30,12 @@ func NewBackends(tools Tools, passphrasePath string, lossPercent int) *Backends 
 }
 
 // Encrypt symmetrically encrypts input with GnuPG AES-256 using file descriptor 3 for the passphrase.
-func (b *Backends) Encrypt(ctx context.Context, input io.Reader, outputPath string) (adapters.Artifact, error) {
+func (b *Backends) Encrypt(ctx context.Context, input io.Reader, outputPath string) (artifact adapters.Artifact, err error) {
+	ctx, span := observability.Start(ctx, "archiver.gpg.encrypt")
+	defer func() {
+		observability.RecordError(span, err)
+		span.End()
+	}()
 	passphrase, err := os.Open(b.passphrasePath)
 	if err != nil {
 		return adapters.Artifact{}, fmt.Errorf("open passphrase file: %w", err)
@@ -43,7 +50,9 @@ func (b *Backends) Encrypt(ctx context.Context, input io.Reader, outputPath stri
 	if err := command.Run(); err != nil {
 		return adapters.Artifact{}, fmt.Errorf("encrypt archive: %w: %s", err, stderr.String())
 	}
-	return artifact(outputPath, "application/pgp-encrypted", b.tools.GPG), nil
+	artifact = artifactForPath(outputPath, "application/pgp-encrypted", b.tools.GPG)
+	observability.RecordIO(ctx, "gpg.encrypted_output", artifact.Size)
+	return artifact, nil
 }
 
 func gpgArguments(outputPath string) []string {
@@ -51,7 +60,12 @@ func gpgArguments(outputPath string) []string {
 }
 
 // VerifyEncrypted decrypts an encrypted payload and validates its PAX tar contents.
-func (b *Backends) VerifyEncrypted(ctx context.Context, encrypted adapters.Artifact) error {
+func (b *Backends) VerifyEncrypted(ctx context.Context, encrypted adapters.Artifact) (err error) {
+	ctx, span := observability.Start(ctx, "archiver.gpg.decrypt_verify")
+	defer func() {
+		observability.RecordError(span, err)
+		span.End()
+	}()
 	passphrase, err := os.Open(b.passphrasePath)
 	if err != nil {
 		return fmt.Errorf("open passphrase file: %w", err)
@@ -81,7 +95,12 @@ func (b *Backends) VerifyEncrypted(ctx context.Context, encrypted adapters.Artif
 }
 
 // CreateParity creates local PAR2 recovery files for an encrypted payload.
-func (b *Backends) CreateParity(ctx context.Context, input adapters.Artifact, outputDir string) ([]adapters.Artifact, error) {
+func (b *Backends) CreateParity(ctx context.Context, input adapters.Artifact, outputDir string) (artifacts []adapters.Artifact, err error) {
+	ctx, span := observability.Start(ctx, "archiver.par2.create", attribute.Int("archiver.loss_percent", b.lossPercent))
+	defer func() {
+		observability.RecordError(span, err)
+		span.End()
+	}()
 	prefix := filepath.Join(outputDir, filepath.Base(input.Path))
 	command := exec.CommandContext(ctx, b.tools.PAR2.Path, par2CreateArguments(b.lossPercent, prefix, input.Path)...)
 	var stderr bytes.Buffer
@@ -97,9 +116,9 @@ func (b *Backends) CreateParity(ctx context.Context, input adapters.Artifact, ou
 		return nil, fmt.Errorf("PAR2 did not create recovery data")
 	}
 	sort.Strings(paths)
-	artifacts := make([]adapters.Artifact, 0, len(paths))
+	artifacts = make([]adapters.Artifact, 0, len(paths))
 	for _, path := range paths {
-		artifacts = append(artifacts, artifact(path, "application/par2", b.tools.PAR2))
+		artifacts = append(artifacts, artifactForPath(path, "application/par2", b.tools.PAR2))
 	}
 	return artifacts, nil
 }
@@ -109,7 +128,12 @@ func par2CreateArguments(lossPercent int, prefix, inputPath string) []string {
 }
 
 // VerifyParity verifies a PAR2 recovery set.
-func (b *Backends) VerifyParity(ctx context.Context, artifacts []adapters.Artifact) error {
+func (b *Backends) VerifyParity(ctx context.Context, artifacts []adapters.Artifact) (err error) {
+	ctx, span := observability.Start(ctx, "archiver.par2.verify")
+	defer func() {
+		observability.RecordError(span, err)
+		span.End()
+	}()
 	if len(artifacts) == 0 {
 		return nil
 	}
@@ -123,7 +147,12 @@ func (b *Backends) VerifyParity(ctx context.Context, artifacts []adapters.Artifa
 }
 
 // TestParityRepair corrupts a disposable encrypted-payload copy and confirms PAR2 repairs it.
-func (b *Backends) TestParityRepair(ctx context.Context, encrypted adapters.Artifact, artifacts []adapters.Artifact) error {
+func (b *Backends) TestParityRepair(ctx context.Context, encrypted adapters.Artifact, artifacts []adapters.Artifact) (err error) {
+	ctx, span := observability.Start(ctx, "archiver.par2.repair_test")
+	defer func() {
+		observability.RecordError(span, err)
+		span.End()
+	}()
 	if len(artifacts) == 0 {
 		return nil
 	}
@@ -162,7 +191,12 @@ func (b *Backends) TestParityRepair(ctx context.Context, encrypted adapters.Arti
 }
 
 // CreateImage creates a UDF ISO image containing only the current disc artifacts.
-func (b *Backends) CreateImage(ctx context.Context, request adapters.ImageRequest) (adapters.Artifact, error) {
+func (b *Backends) CreateImage(ctx context.Context, request adapters.ImageRequest) (artifact adapters.Artifact, err error) {
+	ctx, span := observability.Start(ctx, "archiver.xorriso.image_create", attribute.Int("archiver.disc.number", request.DiscNumber))
+	defer func() {
+		observability.RecordError(span, err)
+		span.End()
+	}()
 	arguments := []string{"-as", "mkisofs", "-iso-level", "3", "-o", request.OutputPath, "-graft-points"}
 	arguments = append(arguments, filepath.Base(request.Encrypted.Path)+"="+request.Encrypted.Path)
 	for _, parity := range request.Parity {
@@ -177,11 +211,18 @@ func (b *Backends) CreateImage(ctx context.Context, request adapters.ImageReques
 	if err := command.Run(); err != nil {
 		return adapters.Artifact{}, fmt.Errorf("create UDF image: %w: %s", err, stderr.String())
 	}
-	return artifact(request.OutputPath, "application/x-iso9660-image", b.tools.Xorriso), nil
+	artifact = artifactForPath(request.OutputPath, "application/x-iso9660-image", b.tools.Xorriso)
+	observability.RecordIO(ctx, "xorriso.image_output", artifact.Size)
+	return artifact, nil
 }
 
 // VerifyImage verifies that an image has a readable, non-empty filesystem structure.
-func (b *Backends) VerifyImage(ctx context.Context, image adapters.Artifact) error {
+func (b *Backends) VerifyImage(ctx context.Context, image adapters.Artifact) (err error) {
+	ctx, span := observability.Start(ctx, "archiver.xorriso.image_verify")
+	defer func() {
+		observability.RecordError(span, err)
+		span.End()
+	}()
 	command := exec.CommandContext(ctx, b.tools.Xorriso.Path, "-indev", image.Path, "-find", "/", "-type", "f", "-exec", "lsdl", "--")
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
@@ -191,7 +232,7 @@ func (b *Backends) VerifyImage(ctx context.Context, image adapters.Artifact) err
 	return nil
 }
 
-func artifact(path, format string, tool Tool) adapters.Artifact {
+func artifactForPath(path, format string, tool Tool) adapters.Artifact {
 	info, err := os.Stat(path)
 	if err != nil {
 		return adapters.Artifact{Path: path, Format: format, Tool: adapters.ToolIdentity{Name: tool.Name, Version: tool.Version, Path: tool.Path}}

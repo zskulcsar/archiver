@@ -47,6 +47,10 @@ Install the required system tools, create a private passphrase file with mode `0
 
 See `docs/linux-image-profile.md` for supported tool interfaces and image-profile limits. See `docs/linux-hardware-compatibility.md` before considering any optical-media operation.
 
+## Observability
+
+Archiver can export optional OpenTelemetry traces and I/O metrics to an OTLP/HTTP endpoint. See `docs/observability.md` for the local Grafana stack and `--otel-endpoint` usage.
+
 The command prints the generated plan path and writes a layout such as:
 
 ```text

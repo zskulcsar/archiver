@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"github.com/zskulcsar/archiver/internal/domain"
+	"github.com/zskulcsar/archiver/internal/observability"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 const reassemblyManifestPath = ".archiver/reassembly-manifest.json"
@@ -48,6 +50,8 @@ func (m ReassemblyManifest) Part(discNumber int, logicalPath string, offset, siz
 
 // BuildReassemblyManifest hashes every planned regular-file range before archive creation.
 func BuildReassemblyManifest(ctx context.Context, setID string, plan domain.ArchivePlan) (ReassemblyManifest, error) {
+	ctx, span := observability.Start(ctx, "archiver.source.hash", attribute.Int("archiver.disc.count", len(plan.Discs)))
+	defer span.End()
 	manifest := ReassemblyManifest{FormatVersion: 1, ArchiveSetID: setID}
 	for _, disc := range plan.Discs {
 		for _, part := range disc.Parts {
@@ -89,6 +93,8 @@ type PAXTarCreator struct{}
 
 // CreateArchive writes one independently recoverable PAX tar payload and its reassembly manifest.
 func (PAXTarCreator) CreateArchive(ctx context.Context, request ArchiveRequest, output io.Writer) error {
+	ctx, span := observability.Start(ctx, "archiver.pax.create", attribute.Int("archiver.disc.number", request.Disc.Number), attribute.Int("archiver.part.count", len(request.Disc.Parts)))
+	defer span.End()
 	writer := tar.NewWriter(output)
 	for _, part := range request.Disc.Parts {
 		if err := ctx.Err(); err != nil {
@@ -222,6 +228,7 @@ func writePart(ctx context.Context, writer *tar.Writer, part domain.Part, entry 
 	if written != part.Size {
 		return fmt.Errorf("source %q ended after %d bytes, expected %d", part.LogicalPath, written, part.Size)
 	}
+	observability.RecordIO(ctx, "pax.source_read", written)
 	if got := hex.EncodeToString(hash.Sum(nil)); got != entry.SHA256 {
 		return fmt.Errorf("source %q changed since manifest hashing", part.LogicalPath)
 	}
@@ -290,6 +297,7 @@ func hashPart(ctx context.Context, part domain.Part) (string, error) {
 	if written != part.Size {
 		return "", fmt.Errorf("source %q ended after %d bytes, expected %d", part.LogicalPath, written, part.Size)
 	}
+	observability.RecordIO(ctx, "source.hash", written)
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 

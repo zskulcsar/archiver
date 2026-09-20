@@ -16,7 +16,9 @@ import (
 	"github.com/zskulcsar/archiver/internal/adapters"
 	"github.com/zskulcsar/archiver/internal/app"
 	"github.com/zskulcsar/archiver/internal/domain"
+	"github.com/zskulcsar/archiver/internal/observability"
 	platformlinux "github.com/zskulcsar/archiver/internal/platform/linux"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // BuildInfo identifies the CLI build displayed by the version command.
@@ -32,12 +34,15 @@ func Execute(args []string, stdout, stderr io.Writer, buildInfo BuildInfo) int {
 
 // ExecuteWithServices runs the Archiver command tree with portable services.
 func ExecuteWithServices(args []string, stdout, stderr io.Writer, buildInfo BuildInfo, services Services) int {
-	root := newRootCommand(buildInfo, services)
+	telemetry := &telemetryRuntime{stderr: stderr, buildInfo: buildInfo}
+	root := newRootCommand(buildInfo, services, telemetry)
 	root.SetArgs(args)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
 
-	if err := root.Execute(); err != nil {
+	err := root.Execute()
+	telemetry.shutdown()
+	if err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
 		if isUsageError(err) {
 			return 2
@@ -50,20 +55,29 @@ func ExecuteWithServices(args []string, stdout, stderr io.Writer, buildInfo Buil
 
 // NewRootCommand creates the Archiver Cobra command tree.
 func NewRootCommand(buildInfo BuildInfo) *cobra.Command {
-	return newRootCommand(buildInfo, defaultServices())
+	return newRootCommand(buildInfo, defaultServices(), &telemetryRuntime{buildInfo: buildInfo})
 }
 
-func newRootCommand(buildInfo BuildInfo, services Services) *cobra.Command {
+func newRootCommand(buildInfo BuildInfo, services Services, telemetry *telemetryRuntime) *cobra.Command {
+	var otelEndpoint string
 	root := &cobra.Command{
 		Use:           "archiver",
 		Short:         "Create encrypted, multi-disc archive images",
 		Args:          cobra.NoArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := telemetry.initialize(cmd.Context(), otelEndpoint)
+			ctx, span := observability.Start(ctx, "archiver."+cmd.Name())
+			telemetry.span = span
+			cmd.SetContext(ctx)
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
 		},
 	}
+	root.PersistentFlags().StringVar(&otelEndpoint, "otel-endpoint", "", "OTLP/HTTP endpoint for optional telemetry, such as http://127.0.0.1:4318")
 
 	root.AddCommand(newVersionCommand(buildInfo))
 	root.AddCommand(newBackendsCommand(services))
@@ -71,6 +85,43 @@ func newRootCommand(buildInfo BuildInfo, services Services) *cobra.Command {
 	root.AddCommand(newCreateCommand(services))
 	root.AddCommand(newVerifyCommand(services))
 	return root
+}
+
+type telemetryRuntime struct {
+	stderr     io.Writer
+	buildInfo  BuildInfo
+	shutdownFn func(context.Context) error
+	span       trace.Span
+}
+
+func (r *telemetryRuntime) initialize(ctx context.Context, endpoint string) context.Context {
+	if r.shutdownFn != nil {
+		return ctx
+	}
+	resolved := observability.ResolveEndpoint(endpoint, os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
+	shutdown, err := observability.Initialize(ctx, observability.Config{Endpoint: resolved, Version: r.buildInfo.Version, Revision: r.buildInfo.Revision})
+	if err != nil {
+		if r.stderr != nil {
+			_, _ = fmt.Fprintf(r.stderr, "warning: telemetry disabled: %v\n", err)
+		}
+		return ctx
+	}
+	r.shutdownFn = shutdown
+	return ctx
+}
+
+func (r *telemetryRuntime) shutdown() {
+	if r.span != nil {
+		r.span.End()
+	}
+	if r.shutdownFn == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), observability.ShutdownTimeout)
+	defer cancel()
+	if err := r.shutdownFn(ctx); err != nil && r.stderr != nil {
+		_, _ = fmt.Fprintf(r.stderr, "warning: telemetry export failed: %v\n", err)
+	}
 }
 
 func newVersionCommand(buildInfo BuildInfo) *cobra.Command {
@@ -133,6 +184,8 @@ func (s portableServices) Backends(context.Context) ([]Backend, error) {
 }
 
 func (s portableServices) Plan(ctx context.Context, config app.ValidatedConfig) (domain.ArchivePlan, error) {
+	ctx, span := observability.Start(ctx, "archiver.plan")
+	defer span.End()
 	sources, err := s.sources(ctx, config)
 	if err != nil {
 		return domain.ArchivePlan{}, err
@@ -157,7 +210,10 @@ func (s portableServices) Create(ctx context.Context, config app.ValidatedConfig
 	if err != nil {
 		return err
 	}
-	tools, err := platformlinux.DiscoverTools(ctx, platformlinux.ToolPaths{}, exec.LookPath, platformlinux.ExecRunner{})
+	discoveryCtx, discoverySpan := observability.Start(ctx, "archiver.backend.discover")
+	tools, err := platformlinux.DiscoverTools(discoveryCtx, platformlinux.ToolPaths{}, exec.LookPath, platformlinux.ExecRunner{})
+	observability.RecordError(discoverySpan, err)
+	discoverySpan.End()
 	if err != nil {
 		return dependencyError{err}
 	}
@@ -173,7 +229,10 @@ func (s portableServices) Create(ctx context.Context, config app.ValidatedConfig
 }
 
 func (portableServices) Verify(ctx context.Context, archiveSetPath string, events app.EventSink) error {
-	tools, err := platformlinux.DiscoverTools(ctx, platformlinux.ToolPaths{}, exec.LookPath, platformlinux.ExecRunner{})
+	discoveryCtx, discoverySpan := observability.Start(ctx, "archiver.backend.discover")
+	tools, err := platformlinux.DiscoverTools(discoveryCtx, platformlinux.ToolPaths{}, exec.LookPath, platformlinux.ExecRunner{})
+	observability.RecordError(discoverySpan, err)
+	discoverySpan.End()
 	if err != nil {
 		return dependencyError{err}
 	}

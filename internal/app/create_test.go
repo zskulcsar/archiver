@@ -15,6 +15,9 @@ import (
 
 	"github.com/zskulcsar/archiver/internal/adapters"
 	"github.com/zskulcsar/archiver/internal/domain"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 // * [x] **P1_CORE_013** Create streams encrypted payloads into independent images
@@ -280,6 +283,41 @@ func TestCreate_TestsParityRepair(t *testing.T) {
 	if !backends.repairTested {
 		t.Fatal("PAR2 repair test was not called")
 	}
+}
+
+// * [x] **OBSERVABILITY_001** Create records image artifact hashing
+// - Description: Creates a disc with an in-memory span recorder enabled.
+// - Expected: The trace includes a distinct image-hash span after image verification.
+func TestCreate_RecordsImageArtifactHashing(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := trace.NewTracerProvider(trace.WithSpanProcessor(recorder))
+	previousProvider := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previousProvider)
+		_ = provider.Shutdown(context.Background())
+	})
+
+	output := t.TempDir()
+	sourcePath := writeCreateTestSource(t, output)
+	err := Create(context.Background(), CreateRequest{
+		Config: testValidatedConfig(output),
+		Plan: domain.ArchivePlan{Discs: []domain.Disc{{
+			Number: 1,
+			Parts:  []domain.Part{{SourcePath: sourcePath, LogicalPath: "photo.jpg", Size: 12}},
+		}}},
+		Backends: &fakeBackends{payload: "archive-data"},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	for _, span := range recorder.Ended() {
+		if span.Name() == "archiver.image.hash" {
+			return
+		}
+	}
+	t.Fatal("trace does not include archiver.image.hash")
 }
 
 func testValidatedConfig(output string) ValidatedConfig {

@@ -1,0 +1,81 @@
+{
+  "annotations": {"list": []},
+  "description": "Archive creation throughput, phase latency, failures, and trace drill-down. The dashboard intentionally uses only low-cardinality telemetry.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "${prometheus}"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}, "overrides": []},
+      "gridPos": {"h": 7, "w": 6, "x": 0, "y": 0},
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"expr": "sum(increase(traces_spanmetrics_calls_total{service=\"archiver\",span_name=\"archiver.create\"}[$__range]))", "refId": "A"}],
+      "title": "Archive Executions",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${prometheus}"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}, "unit": "bytes"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 6, "x": 6, "y": 0},
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"expr": "sum(archiver_io_bytes_total)", "refId": "A"}],
+      "title": "I/O Counter",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${prometheus}"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 0},
+      "options": {"cellHeight": "sm", "showHeader": true},
+      "targets": [{"expr": "sum by (span_name) (increase(traces_spanmetrics_calls_total{service=\"archiver\",status_code=\"STATUS_CODE_ERROR\"}[$__range]))", "format": "table", "instant": true, "refId": "A"}],
+      "title": "Failed Phases",
+      "transformations": [{"id": "filterFieldsByName", "options": {"include": {"names": ["span_name", "Value"]}}}],
+      "type": "table"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${prometheus}"},
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "bytes/s", "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "showPoints": "auto", "spanNulls": false, "stacking": {"group": "A", "mode": "normal"}}, "mappings": [], "unit": "Bps"}, "overrides": []},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 7},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "sum by (archiver_io_operation) (rate(archiver_io_bytes_total[$__rate_interval]))", "legendFormat": "{{archiver_io_operation}}", "refId": "A"}],
+      "title": "I/O Throughput by Operation",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${prometheus}"},
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "seconds", "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "showPoints": "auto", "spanNulls": false, "stacking": {"group": "A", "mode": "normal"}}, "mappings": [], "unit": "s"}, "overrides": []},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 7},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "histogram_quantile(0.95, sum by (le, span_name) (rate(traces_spanmetrics_latency_bucket{service=\"archiver\"}[$__rate_interval])))", "legendFormat": "{{span_name}}", "refId": "A"}],
+      "title": "Phase Latency p95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "tempo", "uid": "${tempo}"},
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 16},
+      "options": {"cellHeight": "sm", "showHeader": true},
+      "targets": [{"limit": 20, "query": "{ resource.service.name = \"archiver\" && span:name = \"archiver.create\" }", "queryType": "traceql", "refId": "A"}],
+      "title": "Recent Archive Create Traces",
+      "type": "table"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["archiver", "opentelemetry"],
+  "templating": {
+    "list": [
+      {"current": {"selected": true, "text": "Prometheus", "value": "prometheus"}, "hide": 0, "includeAll": false, "label": "Metrics", "multi": false, "name": "prometheus", "options": [], "query": "prometheus", "refresh": 1, "type": "datasource"},
+      {"current": {"selected": true, "text": "Tempo", "value": "tempo"}, "hide": 0, "includeAll": false, "label": "Traces", "multi": false, "name": "tempo", "options": [], "query": "tempo", "refresh": 1, "type": "datasource"}
+    ]
+  },
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Archiver Operations",
+  "uid": "archiver-operations",
+  "version": 1,
+  "weekStart": ""
+}
