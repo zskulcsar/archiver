@@ -6,7 +6,7 @@ The portable planning core and the initial Linux image-only backend are implemen
 
 ## Current State
 
-Phase 1.2 provides a portable, testable planning core:
+Phase 1.3 provides portable planning and a Linux image-creation workflow:
 
 - Validates positional source paths or versioned SQLite source manifests.
 - Rejects network filesystems and unsafe source inputs; supports archive-relative symlinks and optional materialization of external local symlinks.
@@ -16,6 +16,18 @@ Phase 1.2 provides a portable, testable planning core:
 - Uses staging directories, no-overwrite preflight, structured JSON Lines events, and actionable precondition failures.
 
 On Linux, `create` discovers installed `gpg`, `par2`, and `xorriso` before staging output. It streams PAX tar payloads, including exact byte ranges for split files, through GnuPG AES-256 encryption with a private `--passphrase-file`, protects encrypted payloads with PAR2, creates ISO9660 Level 3 images, and verifies them before publication. `verify` checks published image integrity. Direct optical writing remains disabled pending an approved hardware compatibility-matrix entry.
+
+When local recovery is enabled, each disc also undergoes a disposable PAR2 repair drill: Archiver copies the encrypted payload and recovery files into staging, corrupts the payload copy, repairs it with PAR2, and confirms the repaired bytes match the original. This provides an end-to-end recovery proof before publication.
+
+## Linux Dependencies
+
+The current image-only backend requires these installed tools:
+
+- `gpg` 2.2 or newer, with loopback pinentry and `--passphrase-fd` support.
+- `par2` from par2cmdline 0.8 or newer, with create, verify, and repair support.
+- `xorriso` 1.5 or newer, with ISO9660 Level 3 image creation and filesystem inspection support.
+
+Distribution package names commonly include `gnupg`, `par2cmdline`, and `xorriso`. Archiver discovers tools locally and never installs or upgrades them. PAX tar creation uses Go's standard library and has no external archive-tool dependency.
 
 ## Planning Example
 
