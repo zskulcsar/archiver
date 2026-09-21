@@ -1,6 +1,6 @@
 module github.com/zskulcsar/archiver
 
-go 1.25.13
+go 1.26
 
 require (
 	github.com/spf13/cobra v1.9.1

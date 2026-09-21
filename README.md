@@ -75,7 +75,7 @@ The plan file contains the archive-set ID, usable capacity, split policy, disc u
 
 Requirements:
 
-- Go 1.25.13
+- Go 1.26
 - `golangci-lint` 2.11.4
 - GNU Make
 
